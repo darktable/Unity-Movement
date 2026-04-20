@@ -23,6 +23,12 @@ namespace Meta.XR.Movement.Samples
         [SerializeField, InspectorButton("ToggleTargetSkeletonDraw")]
         private bool _toggleTargetButton;
 
+        [SerializeField, InspectorButton("ToggleSourceTPoseDraw")]
+        private bool _toggleSourceTPoseButton;
+
+        [SerializeField, InspectorButton("ToggleTargetTPoseDraw")]
+        private bool _toggleTargetTPoseButton;
+
         private void Awake()
         {
             Assert.IsTrue(_retargeters is { Length: > 0 });
@@ -56,12 +62,30 @@ namespace Meta.XR.Movement.Samples
             }
         }
 
+        public void ToggleSourceTPoseDraw()
+        {
+            foreach (var retargeter in _retargeters)
+            {
+                retargeter.DebugDrawSourceTPose = !retargeter.DebugDrawSourceTPose;
+            }
+        }
+
+        public void ToggleTargetTPoseDraw()
+        {
+            foreach (var retargeter in _retargeters)
+            {
+                retargeter.DebugDrawTargetTPose = !retargeter.DebugDrawTargetTPose;
+            }
+        }
+
         public void ClearSkeletonDraw()
         {
             foreach (var retargeter in _retargeters)
             {
                 retargeter.DebugDrawSourceSkeleton = false;
                 retargeter.DebugDrawTargetSkeleton = false;
+                retargeter.DebugDrawSourceTPose = false;
+                retargeter.DebugDrawTargetTPose = false;
             }
         }
     }
