@@ -24,15 +24,24 @@ namespace Meta.XR.Movement.AI
     /// </summary>
     public enum RootMotionMode
     {
-        /// <summary>No root motion applied.</summary>
-        [Tooltip("Do not apply root motion")]
+        /// <summary>
+        /// Root transform is not modified. Hips are positioned relative to Root at origin (0,0,0).
+        /// Use this when you don't want the AI Motion Synthesizer to control the character's root position.
+        /// </summary>
+        [Tooltip("Do not apply root motion. Root transform remains untouched.")]
         None,
 
-        /// <summary>Copy position/rotation from <see cref="AIMotionSynthesizerConfig.ReferenceTransform"/>.</summary>
-        [Tooltip("Apply root motion from reference")]
+        /// <summary>
+        /// Same behavior as None for pose computation, but in LateUpdate the reference transform's
+        /// position and rotation are copied to the root transform.
+        /// </summary>
+        [Tooltip("Apply root motion from reference transform in LateUpdate")]
         ApplyFromReference,
 
-        /// <summary>Apply root motion computed by the AI motion synthesizer system.</summary>
+        /// <summary>
+        /// Root transform is driven by the AI Motion Synthesizer. Hips are positioned relative to Root.
+        /// The root pose (XZ translation + yaw rotation) is applied to the transform.
+        /// </summary>
         [Tooltip("Apply root motion from AIMotionSynthesizer")]
         ApplyRootMotion
     }
@@ -78,6 +87,10 @@ namespace Meta.XR.Movement.AI
         /// <summary>Pose source for lower body (hips and legs) at full blend.</summary>
         [Tooltip("Which pose to use for lower body when blend factor = 1 (hips and legs)")]
         public MSDKAIMotionSynthesizer.PoseSource LowerBodySource = MSDKAIMotionSynthesizer.PoseSource.AIMotionSynthesizer;
+
+        /// <summary>Which pose's root forward direction to align to during blending.</summary>
+        [Tooltip("Which pose's forward direction to align to during blending. BodyTracking: blended result follows user's facing direction. AIMotionSynthesizer: blended result follows procedural animation direction.")]
+        public MSDKAIMotionSynthesizer.RootAlignmentDirection RootAlignmentDirection = MSDKAIMotionSynthesizer.RootAlignmentDirection.BodyTracking;
 
         /// <summary>Whether blend factor is controlled manually or by input activity.</summary>
         [Tooltip("How to control the blend factor between body tracking and AIMotionSynthesizer")]

@@ -340,6 +340,12 @@ namespace Meta.XR.Movement.Retargeting
         /// </summary>
         public virtual void OnValidate()
         {
+#if UNITY_EDITOR
+            if (UnityEditor.BuildPipeline.isBuildingPlayer)
+            {
+                return;
+            }
+#endif
             ValidateConfiguration();
         }
 

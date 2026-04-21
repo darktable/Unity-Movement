@@ -25,6 +25,12 @@
         }
     },
     "source": {
+        "format": {
+            "jointSpaceType": "RootOriginRelative",
+            "skeletonFlags": {
+                "noRotationCorrectionOnCoordConversion": true
+            }
+        },
         "joints": [
             "Root",
             "Hips",

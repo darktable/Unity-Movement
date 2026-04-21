@@ -93,6 +93,14 @@ namespace Meta.XR.Movement.Retargeting
             public int HipsJointIndex;
 
             /// <summary>
+            /// Mask indicating which joints are mapped from the source skeleton.
+            /// Unmapped joints (value 0) are skipped, leaving them free for other components.
+            /// If empty, all joints are applied (backward compatible).
+            /// </summary>
+            [ReadOnly]
+            internal NativeArray<byte> MappedJointMask;
+
+            /// <summary>
             /// The current rotation index.
             /// </summary>
             public int CurrentRotationIndex;
@@ -101,6 +109,11 @@ namespace Meta.XR.Movement.Retargeting
             [BurstCompile]
             public void Execute(int index, TransformAccess transform)
             {
+                if (MappedJointMask.IsCreated && MappedJointMask[index] == 0)
+                {
+                    return;
+                }
+
                 var bodyPose = BodyPose[index];
                 var isRotationOnly = CurrentRotationIndex >= 0 &&
                                      CurrentRotationIndex < RotationOnlyIndices.Length &&

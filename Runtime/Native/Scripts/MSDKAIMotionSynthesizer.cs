@@ -39,6 +39,37 @@ namespace Meta.XR.Movement
             AIMotionSynthesizer = 1
         }
 
+        /// <summary>
+        /// Controls how root motion is extracted from the AI Motion Synthesizer pose.
+        /// Determines the coordinate space of outputPose relative to outputRootPose.
+        /// </summary>
+        public enum RootMotionMode
+        {
+            /// <summary>No root motion extraction. Root zeroed, hips retain position.</summary>
+            None = 0,
+
+            /// <summary>Root extracted from hips, skeleton joints remain in world-origin-relative space.</summary>
+            WorldSpace = 1,
+
+            /// <summary>
+            /// Root extracted from hips, skeleton joints transformed to root-relative space.
+            /// Use when applying root motion externally to prevent double-motion.
+            /// </summary>
+            LocalSpace = 2
+        }
+
+        /// <summary>
+        /// Which pose's root forward direction to align to during blending.
+        /// </summary>
+        public enum RootAlignmentDirection
+        {
+            /// <summary>Align blended result to body tracking root forward (user's actual facing direction).</summary>
+            BodyTracking = 0,
+
+            /// <summary>Align blended result to AI Motion Synthesizer root forward (procedural animation direction).</summary>
+            AIMotionSynthesizer = 1
+        }
+
         private static LogCallback _aiMotionSynthesizerLogCallback = null;
 
         private static class AIMotionSynthesizerApi
@@ -75,6 +106,12 @@ namespace Meta.XR.Movement
                 int guidanceBytesLength);
 
             [DllImport(AI_MOTION_SYNTHESIZER_DLL, CallingConvention = CallingConvention.Cdecl)]
+            public static extern Result metaMovementSDK_getAIMotionSynthesizerSkeletonInfo(
+                ulong handle,
+                SkeletonType skeletonType,
+                out SkeletonInfo outSkeletonInfo);
+
+            [DllImport(AI_MOTION_SYNTHESIZER_DLL, CallingConvention = CallingConvention.Cdecl)]
             public static extern Result metaMovementSDK_processAIMotionSynthesizer(
                 ulong handle,
                 float deltaTime,
@@ -82,10 +119,13 @@ namespace Meta.XR.Movement
                 Vector3 velocity);
 
             [DllImport(AI_MOTION_SYNTHESIZER_DLL, CallingConvention = CallingConvention.Cdecl)]
-            public static extern unsafe Result metaMovementSDK_getAIMotionSynthesizerPose(
+            public static extern Result metaMovementSDK_predictAIMotionSynthesizer(ulong handle, float deltaTime);
+
+            [DllImport(AI_MOTION_SYNTHESIZER_DLL, CallingConvention = CallingConvention.Cdecl)]
+            public static extern unsafe Result metaMovementSDK_updateAIMotionSynthesizerTPose(
                 ulong handle,
-                NativeTransform* outputPose,
-                NativeTransform* outputRootPose);
+                NativeTransform* targetTPose,
+                int numJoints);
 
             [DllImport(AI_MOTION_SYNTHESIZER_DLL, CallingConvention = CallingConvention.Cdecl)]
             public static extern unsafe Result metaMovementSDK_getAIMotionSynthesizerTPose(
@@ -93,21 +133,11 @@ namespace Meta.XR.Movement
                 NativeTransform* outputTPose);
 
             [DllImport(AI_MOTION_SYNTHESIZER_DLL, CallingConvention = CallingConvention.Cdecl)]
-            public static extern Result metaMovementSDK_getAIMotionSynthesizerSkeletonInfo(
+            public static extern unsafe Result metaMovementSDK_getAIMotionSynthesizerPose(
                 ulong handle,
-                SkeletonType skeletonType,
-                out SkeletonInfo outSkeletonInfo);
-
-            [DllImport(AI_MOTION_SYNTHESIZER_DLL, CallingConvention = CallingConvention.Cdecl)]
-            public static extern Result metaMovementSDK_predictAIMotionSynthesizer(ulong handle, float deltaTime);
-
-            [DllImport(AI_MOTION_SYNTHESIZER_DLL, CallingConvention = CallingConvention.Cdecl)]
-            public static extern unsafe Result metaMovementSDK_getSynthesizedAIMotionSynthesizerPose(
-                ulong handle,
-                NativeTransform* bodyTrackingPose,
-                float blendFactor,
-                NativeTransform* outputBlendedPose,
-                NativeTransform* outputRootPose);
+                NativeTransform* outputPose,
+                NativeTransform* outputRootPose,
+                RootMotionMode rootMotionMode);
 
             [DllImport(AI_MOTION_SYNTHESIZER_DLL, CallingConvention = CallingConvention.Cdecl)]
             public static extern unsafe Result metaMovementSDK_getBlendedAIMotionSynthesizerPose(
@@ -115,15 +145,21 @@ namespace Meta.XR.Movement
                     NativeTransform* bodyTrackingPose,
                     PoseSource upperBodySource,
                     PoseSource lowerBodySource,
+                    RootAlignmentDirection rootAlignmentDirection,
                     float blendFactor,
+                    RootMotionMode rootMotionMode,
                     NativeTransform* outputBlendedPose,
                     NativeTransform* outputRootPose);
 
             [DllImport(AI_MOTION_SYNTHESIZER_DLL, CallingConvention = CallingConvention.Cdecl)]
-            public static extern unsafe Result metaMovementSDK_updateAIMotionSynthesizerTPose(
+            public static extern unsafe Result metaMovementSDK_getSynthesizedAIMotionSynthesizerPose(
                 ulong handle,
-                NativeTransform* targetTPose,
-                int numJoints);
+                NativeTransform* bodyTrackingPose,
+                float blendFactor,
+                RootAlignmentDirection rootAlignmentDirection,
+                RootMotionMode rootMotionMode,
+                NativeTransform* outputBlendedPose,
+                NativeTransform* outputRootPose);
         }
 
         #region AIMotionSynthesizer Unity API
@@ -323,6 +359,26 @@ namespace Meta.XR.Movement
         }
 
         /// <summary>
+        /// Gets skeleton information for the specified skeleton type from the AIMotionSynthesizer handle.
+        /// This retrieves basic information about the skeleton structure, including the number of joints and blendshapes.
+        /// Use this to understand the structure of a skeleton before performing operations on it.
+        /// </summary>
+        /// <param name="handle">The AIMotionSynthesizer handle to get the skeleton info from.</param>
+        /// <param name="skeletonType">The type of skeleton (source or target) to get info from.</param>
+        /// <param name="skeletonInfo">Output parameter that receives the skeleton information.</param>
+        /// <returns>True if the function was successfully executed.</returns>
+        public static bool GetSkeletonInfo(UInt64 handle, SkeletonType skeletonType, out SkeletonInfo skeletonInfo)
+        {
+            Result success;
+            using (new ProfilerScope(nameof(GetSkeletonInfo)))
+            {
+                success = AIMotionSynthesizerApi.metaMovementSDK_getAIMotionSynthesizerSkeletonInfo(handle, skeletonType, out skeletonInfo);
+            }
+
+            return success == Result.Success;
+        }
+
+        /// <summary>
         /// Process the AIMotionSynthesizer with the given motion parameters.
         /// This method schedules tasks and services instances but does NOT run prediction.
         /// Call Predict() separately at a fixed rate (e.g., 30Hz).
@@ -352,51 +408,89 @@ namespace Meta.XR.Movement
         }
 
         /// <summary>
-        /// Retrieves the current pose from the AIMotionSynthesizer system after processing.
-        /// Note: The output pose size must match the skeleton joint count from the AIMotionSynthesizer configuration.
-        /// This version allocates a temp NativeArray for the output.
+        /// Runs neural network prediction for all instances.
+        /// This method should be called at a fixed rate (e.g., 30Hz) independently from GetPose().
+        /// It performs the neural network inference to generate future animation sequences.
+        /// - GetPose() is called every frame to service instances
+        /// - Predict() is called at a fixed rate (e.g., 30Hz) to run inference
         /// </summary>
-        /// <param name="handle">The handle to use for retrieving the pose.</param>
-        /// <param name="outputPose">The output array to write pose data to.</param>
-        /// <param name="jointCount">The number of joints expected in the output pose.</param>
-        /// <returns>True if retrieval was successful, false otherwise.</returns>
-        public static bool GetPose(
-            UInt64 handle,
-            out NativeArray<NativeTransform> outputPose,
-            int jointCount)
+        /// <param name="handle">The handle to use for prediction.</param>
+        /// <param name="deltaTime">The time delta between frames in seconds.</param>
+        /// <returns>True if prediction was successful, false otherwise.</returns>
+        public static bool Predict(UInt64 handle, float deltaTime)
         {
             Result success;
-            using (new ProfilerScope(nameof(GetPose)))
+            using (new ProfilerScope(nameof(Predict)))
             {
-                unsafe
-                {
-                    outputPose = new NativeArray<NativeTransform>(jointCount, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
-                    success = AIMotionSynthesizerApi.metaMovementSDK_getAIMotionSynthesizerPose(
-                        handle,
-                        outputPose.GetPtr(),
-                        null);
-                }
+                success = AIMotionSynthesizerApi.metaMovementSDK_predictAIMotionSynthesizer(handle, deltaTime);
             }
 
             return success == Result.Success;
         }
 
         /// <summary>
-        /// Retrieves the current pose from the AIMotionSynthesizer system after processing, including the root pose.
+        /// Update the source reference T-pose scale for the AIMotionSynthesizer retargeting.
+        ///
+        /// This function compares the passed-in body tracking T-pose with the source T-pose
+        /// to calculate a scaling factor, then stores it for use during pose retargeting and blending.
+        ///
+        /// To prevent jittering from inconsistent pose lengths, only call this function when:
+        /// - Initializing the AIMotionSynthesizer (scale starts at 1.0)
+        /// - When the body tracking T-pose actually changes
+        ///
+        /// Do NOT call this function every frame, as varying pose lengths can cause jittering.
+        /// </summary>
+        /// <param name="handle">The AIMotionSynthesizer handle.</param>
+        /// <param name="targetTPose">Body tracking T-pose transforms to calculate scale from.</param>
+        /// <returns>True if the update was successful, false otherwise.</returns>
+        public static bool UpdateTPose(
+            UInt64 handle,
+            NativeArray<NativeTransform> targetTPose)
+        {
+            if (!targetTPose.IsCreated)
+            {
+                Debug.LogError("[MSDKAIMotionSynthesizer] UpdateTPose: targetTPose must be created");
+                return false;
+            }
+
+            Result success;
+            using (new ProfilerScope(nameof(UpdateTPose)))
+            {
+                unsafe
+                {
+                    success = AIMotionSynthesizerApi.metaMovementSDK_updateAIMotionSynthesizerTPose(
+                        handle,
+                        targetTPose.GetPtr(),
+                        targetTPose.Length);
+                }
+            }
+
+            if (success != Result.Success)
+            {
+                Debug.LogError($"[MSDKAIMotionSynthesizer] UpdateTPose failed with result: {success}");
+            }
+
+            return success == Result.Success;
+        }
+
+        /// <summary>
+        /// Retrieves the current pose with configurable root motion handling.
         /// The root pose contains XZ translation and yaw rotation extracted from the hips joint.
         /// Note: The output pose size must match the skeleton joint count from the AIMotionSynthesizer configuration.
         /// This version allocates a temp NativeArray for the output.
         /// </summary>
         /// <param name="handle">The handle to use for retrieving the pose.</param>
-        /// <param name="outputPose">The output array to write pose data to (root joint will be zeroed).</param>
+        /// <param name="outputPose">The output array to write pose data to.</param>
         /// <param name="outputRootPose">The extracted root pose (XZ translation + yaw rotation).</param>
         /// <param name="jointCount">The number of joints expected in the output pose.</param>
+        /// <param name="rootMotionMode">Controls how root motion is extracted and how skeleton joints are transformed.</param>
         /// <returns>True if retrieval was successful, false otherwise.</returns>
         public static bool GetPose(
             UInt64 handle,
             out NativeArray<NativeTransform> outputPose,
             out NativeTransform outputRootPose,
-            int jointCount)
+            int jointCount,
+            RootMotionMode rootMotionMode)
         {
             Result success;
             using (new ProfilerScope(nameof(GetPose)))
@@ -409,7 +503,8 @@ namespace Meta.XR.Movement
                         success = AIMotionSynthesizerApi.metaMovementSDK_getAIMotionSynthesizerPose(
                             handle,
                             outputPose.GetPtr(),
-                            rootPosePtr);
+                            rootPosePtr,
+                            rootMotionMode);
                     }
                 }
             }
@@ -418,44 +513,20 @@ namespace Meta.XR.Movement
         }
 
         /// <summary>
-        /// Retrieves the current pose from the AIMotionSynthesizer system after processing.
-        /// This version uses a pre-allocated persistent NativeArray.
-        /// </summary>
-        /// <param name="handle">The handle to use for retrieving the pose.</param>
-        /// <param name="outputPose">The pre-allocated output array to write pose data to.</param>
-        /// <returns>True if retrieval was successful, false otherwise.</returns>
-        public static bool GetPoseByRef(
-            UInt64 handle,
-            ref NativeArray<NativeTransform> outputPose)
-        {
-            Result success;
-            using (new ProfilerScope(nameof(GetPoseByRef)))
-            {
-                unsafe
-                {
-                    success = AIMotionSynthesizerApi.metaMovementSDK_getAIMotionSynthesizerPose(
-                        handle,
-                        outputPose.GetPtr(),
-                        null);
-                }
-            }
-
-            return success == Result.Success;
-        }
-
-        /// <summary>
-        /// Retrieves the current pose from the AIMotionSynthesizer system after processing, including the root pose.
+        /// Retrieves the current pose with configurable root motion handling.
         /// The root pose contains XZ translation and yaw rotation extracted from the hips joint.
         /// This version uses a pre-allocated persistent NativeArray.
         /// </summary>
         /// <param name="handle">The handle to use for retrieving the pose.</param>
-        /// <param name="outputPose">The pre-allocated output array to write pose data to (root joint will be zeroed).</param>
+        /// <param name="outputPose">The pre-allocated output array to write pose data to.</param>
         /// <param name="outputRootPose">The extracted root pose (XZ translation + yaw rotation).</param>
+        /// <param name="rootMotionMode">Controls how root motion is extracted and how skeleton joints are transformed.</param>
         /// <returns>True if retrieval was successful, false otherwise.</returns>
         public static bool GetPoseByRef(
             UInt64 handle,
             ref NativeArray<NativeTransform> outputPose,
-            out NativeTransform outputRootPose)
+            out NativeTransform outputRootPose,
+            RootMotionMode rootMotionMode)
         {
             Result success;
             using (new ProfilerScope(nameof(GetPoseByRef)))
@@ -467,7 +538,8 @@ namespace Meta.XR.Movement
                         success = AIMotionSynthesizerApi.metaMovementSDK_getAIMotionSynthesizerPose(
                             handle,
                             outputPose.GetPtr(),
-                            rootPosePtr);
+                            rootPosePtr,
+                            rootMotionMode);
                     }
                 }
             }
@@ -532,47 +604,6 @@ namespace Meta.XR.Movement
         }
 
         /// <summary>
-        /// Gets skeleton information for the specified skeleton type from the AIMotionSynthesizer handle.
-        /// This retrieves basic information about the skeleton structure, including the number of joints and blendshapes.
-        /// Use this to understand the structure of a skeleton before performing operations on it.
-        /// </summary>
-        /// <param name="handle">The AIMotionSynthesizer handle to get the skeleton info from.</param>
-        /// <param name="skeletonType">The type of skeleton (source or target) to get info from.</param>
-        /// <param name="skeletonInfo">Output parameter that receives the skeleton information.</param>
-        /// <returns>True if the function was successfully executed.</returns>
-        public static bool GetSkeletonInfo(UInt64 handle, SkeletonType skeletonType, out SkeletonInfo skeletonInfo)
-        {
-            Result success;
-            using (new ProfilerScope(nameof(GetSkeletonInfo)))
-            {
-                success = AIMotionSynthesizerApi.metaMovementSDK_getAIMotionSynthesizerSkeletonInfo(handle, skeletonType, out skeletonInfo);
-            }
-
-            return success == Result.Success;
-        }
-
-        /// <summary>
-        /// Runs neural network prediction for all instances.
-        /// This method should be called at a fixed rate (e.g., 30Hz) independently from GetPose().
-        /// It performs the neural network inference to generate future animation sequences.
-        /// - GetPose() is called every frame to service instances
-        /// - Predict() is called at a fixed rate (e.g., 30Hz) to run inference
-        /// </summary>
-        /// <param name="handle">The handle to use for prediction.</param>
-        /// <param name="deltaTime">The time delta between frames in seconds.</param>
-        /// <returns>True if prediction was successful, false otherwise.</returns>
-        public static bool Predict(UInt64 handle, float deltaTime)
-        {
-            Result success;
-            using (new ProfilerScope(nameof(Predict)))
-            {
-                success = AIMotionSynthesizerApi.metaMovementSDK_predictAIMotionSynthesizer(handle, deltaTime);
-            }
-
-            return success == Result.Success;
-        }
-
-        /// <summary>
         /// Get a synthesized pose that blends between body tracking and AIMotionSynthesizer for upper body,
         /// while always using AIMotionSynthesizer for lower body.
         /// This function creates a synthesized pose where:
@@ -588,13 +619,17 @@ namespace Meta.XR.Movement
         /// <param name="handle">The AIMotionSynthesizer handle to use for blending.</param>
         /// <param name="bodyTrackingPose">Input body tracking pose.</param>
         /// <param name="blendFactor">Blend factor controlling upper body source (0.0 = body tracking upper, 1.0 = AIMotionSynthesizer upper).</param>
+        /// <param name="rootAlignmentDirection">Which pose's forward direction to align to during blending.</param>
+        /// <param name="rootMotionMode">Controls how root motion is extracted and how skeleton joints are transformed.</param>
         /// <param name="outputBlendedPose">Output synthesized pose (will be allocated if not already created).</param>
         /// <param name="outputRootPose">Output root pose (extracted from AIMotionSynthesizer).</param>
         /// <returns>True if synthesis was successful, false otherwise.</returns>
-        public static bool GetSynthesizedAIMotionSynthesizerPose(
+        public static bool GetSynthesizedPose(
             UInt64 handle,
             NativeArray<NativeTransform> bodyTrackingPose,
             float blendFactor,
+            RootAlignmentDirection rootAlignmentDirection,
+            RootMotionMode rootMotionMode,
             out NativeArray<NativeTransform> outputBlendedPose,
             out NativeTransform outputRootPose)
         {
@@ -610,7 +645,7 @@ namespace Meta.XR.Movement
             outputBlendedPose = new NativeArray<NativeTransform>(jointCount, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
 
             Result success;
-            using (new ProfilerScope(nameof(GetSynthesizedAIMotionSynthesizerPose)))
+            using (new ProfilerScope(nameof(GetSynthesizedPose)))
             {
                 unsafe
                 {
@@ -620,6 +655,8 @@ namespace Meta.XR.Movement
                             handle,
                             bodyTrackingPose.GetPtr(),
                             blendFactor,
+                            rootAlignmentDirection,
+                            rootMotionMode,
                             outputBlendedPose.GetPtr(),
                             rootPosePtr);
                     }
@@ -647,13 +684,17 @@ namespace Meta.XR.Movement
         /// <param name="handle">The AIMotionSynthesizer handle to use for blending.</param>
         /// <param name="bodyTrackingPose">Input body tracking pose.</param>
         /// <param name="blendFactor">Blend factor controlling upper body source (0.0 = body tracking upper, 1.0 = AIMotionSynthesizer upper).</param>
+        /// <param name="rootAlignmentDirection">Which pose's forward direction to align to during blending.</param>
+        /// <param name="rootMotionMode">Controls how root motion is extracted and how skeleton joints are transformed.</param>
         /// <param name="outputBlendedPose">Output synthesized pose (pre-allocated).</param>
         /// <param name="outputRootPose">Output root pose (extracted from AIMotionSynthesizer).</param>
         /// <returns>True if synthesis was successful, false otherwise.</returns>
-        public static bool GetSynthesizedAIMotionSynthesizerPoseByRef(
+        public static bool GetSynthesizedPoseByRef(
             UInt64 handle,
             NativeArray<NativeTransform> bodyTrackingPose,
             float blendFactor,
+            RootAlignmentDirection rootAlignmentDirection,
+            RootMotionMode rootMotionMode,
             ref NativeArray<NativeTransform> outputBlendedPose,
             out NativeTransform outputRootPose)
         {
@@ -677,7 +718,7 @@ namespace Meta.XR.Movement
             }
 
             Result success;
-            using (new ProfilerScope(nameof(GetSynthesizedAIMotionSynthesizerPose)))
+            using (new ProfilerScope(nameof(GetSynthesizedPose)))
             {
                 unsafe
                 {
@@ -687,6 +728,8 @@ namespace Meta.XR.Movement
                             handle,
                             bodyTrackingPose.GetPtr(),
                             blendFactor,
+                            rootAlignmentDirection,
+                            rootMotionMode,
                             outputBlendedPose.GetPtr(),
                             rootPosePtr);
                     }
@@ -703,23 +746,33 @@ namespace Meta.XR.Movement
 
         /// <summary>
         /// Blend body tracking and AIMotionSynthesizer poses based on upper/lower body options.
-        /// This function aligns the AIMotionSynthesizer pose to the body tracking pose by the hips,
-        /// then blends between the two poses based on the blend factor and body region settings.
+        /// This function aligns the poses based on the specified root alignment direction before blending.
+        /// When aligning to body tracking, the AIMotionSynthesizer pose is rotated to match the body tracking forward.
+        /// When aligning to AIMotionSynthesizer, the body tracking pose is rotated to match the AIMotionSynthesizer forward.
+        ///
+        /// Special cases for homogeneous sources:
+        /// - When both sources are AIMotionSynthesizer: Output is identical to GetPose with the specified rootMotionMode
+        /// - When both sources are BodyTracking: Root motion is extracted from body tracking pose
+        ///   and the skeleton is optionally transformed to local space based on rootMotionMode
         /// </summary>
         /// <param name="handle">The AIMotionSynthesizer handle to use for blending.</param>
         /// <param name="bodyTrackingPose">Input body tracking pose.</param>
         /// <param name="upperBodySource">Which pose to use for upper body (spine and above).</param>
         /// <param name="lowerBodySource">Which pose to use for lower body (hips and legs).</param>
+        /// <param name="rootAlignmentDirection">Which pose's forward direction to align to during blending.</param>
         /// <param name="blendFactor">Blend factor (0.0 = body tracking only, 1.0 = use upper/lower body options).</param>
+        /// <param name="rootMotionMode">Controls how root motion is extracted and how skeleton joints are transformed.</param>
         /// <param name="outputBlendedPose">Output blended pose (will be allocated if not already created).</param>
-        /// <param name="outputRootPose">Output root pose (extracted from AIMotionSynthesizer).</param>
+        /// <param name="outputRootPose">Output root pose (extracted based on alignment direction and sources).</param>
         /// <returns>True if blending was successful, false otherwise.</returns>
-        public static bool GetBlendedAIMotionSynthesizerPose(
+        public static bool GetBlendedPose(
             UInt64 handle,
             NativeArray<NativeTransform> bodyTrackingPose,
             PoseSource upperBodySource,
             PoseSource lowerBodySource,
+            RootAlignmentDirection rootAlignmentDirection,
             float blendFactor,
+            RootMotionMode rootMotionMode,
             out NativeArray<NativeTransform> outputBlendedPose,
             out NativeTransform outputRootPose)
         {
@@ -735,7 +788,7 @@ namespace Meta.XR.Movement
             outputBlendedPose = new NativeArray<NativeTransform>(jointCount, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
 
             Result success;
-            using (new ProfilerScope(nameof(GetBlendedAIMotionSynthesizerPose)))
+            using (new ProfilerScope(nameof(GetBlendedPose)))
             {
                 unsafe
                 {
@@ -746,7 +799,9 @@ namespace Meta.XR.Movement
                             bodyTrackingPose.GetPtr(),
                             upperBodySource,
                             lowerBodySource,
+                            rootAlignmentDirection,
                             blendFactor,
+                            rootMotionMode,
                             outputBlendedPose.GetPtr(),
                             rootPosePtr);
                     }
@@ -763,24 +818,34 @@ namespace Meta.XR.Movement
 
         /// <summary>
         /// Blend body tracking and AIMotionSynthesizer poses based on upper/lower body options.
-        /// This function aligns the AIMotionSynthesizer pose to the body tracking pose by the hips,
-        /// then blends between the two poses based on the blend factor and body region settings.
+        /// This function aligns the poses based on the specified root alignment direction before blending.
+        /// When aligning to body tracking, the AIMotionSynthesizer pose is rotated to match the body tracking forward.
+        /// When aligning to AIMotionSynthesizer, the body tracking pose is rotated to match the AIMotionSynthesizer forward.
         /// This version uses pre-allocated persistent NativeArrays.
+        ///
+        /// Special cases for homogeneous sources:
+        /// - When both sources are AIMotionSynthesizer: Output is identical to GetPose with the specified rootMotionMode
+        /// - When both sources are BodyTracking: Root motion is extracted from body tracking pose
+        ///   and the skeleton is optionally transformed to local space based on rootMotionMode
         /// </summary>
         /// <param name="handle">The AIMotionSynthesizer handle to use for blending.</param>
         /// <param name="bodyTrackingPose">Input body tracking pose.</param>
         /// <param name="upperBodySource">Which pose to use for upper body (spine and above).</param>
         /// <param name="lowerBodySource">Which pose to use for lower body (hips and legs).</param>
+        /// <param name="rootAlignmentDirection">Which pose's forward direction to align to during blending.</param>
         /// <param name="blendFactor">Blend factor (0.0 = body tracking only, 1.0 = use upper/lower body options).</param>
+        /// <param name="rootMotionMode">Controls how root motion is extracted and how skeleton joints are transformed.</param>
         /// <param name="outputBlendedPose">Output blended pose (pre-allocated).</param>
-        /// <param name="outputRootPose">Output root pose (extracted from AIMotionSynthesizer).</param>
+        /// <param name="outputRootPose">Output root pose (extracted based on alignment direction and sources).</param>
         /// <returns>True if blending was successful, false otherwise.</returns>
-        public static bool GetBlendedAIMotionSynthesizerPoseByRef(
+        public static bool GetBlendedPoseByRef(
             UInt64 handle,
             NativeArray<NativeTransform> bodyTrackingPose,
             PoseSource upperBodySource,
             PoseSource lowerBodySource,
+            RootAlignmentDirection rootAlignmentDirection,
             float blendFactor,
+            RootMotionMode rootMotionMode,
             ref NativeArray<NativeTransform> outputBlendedPose,
             out NativeTransform outputRootPose)
         {
@@ -804,7 +869,7 @@ namespace Meta.XR.Movement
             }
 
             Result success;
-            using (new ProfilerScope(nameof(GetBlendedAIMotionSynthesizerPose)))
+            using (new ProfilerScope(nameof(GetBlendedPose)))
             {
                 unsafe
                 {
@@ -815,7 +880,9 @@ namespace Meta.XR.Movement
                             bodyTrackingPose.GetPtr(),
                             upperBodySource,
                             lowerBodySource,
+                            rootAlignmentDirection,
                             blendFactor,
+                            rootMotionMode,
                             outputBlendedPose.GetPtr(),
                             rootPosePtr);
                     }
@@ -825,51 +892,6 @@ namespace Meta.XR.Movement
             if (success != Result.Success)
             {
                 Debug.LogError($"[MSDKAIMotionSynthesizer] GetBlendedAIMotionSynthesizerPose failed with result: {success}");
-            }
-
-            return success == Result.Success;
-        }
-
-        /// <summary>
-        /// Update the source reference T-pose scale for the AIMotionSynthesizer retargeting.
-        ///
-        /// This function compares the passed-in body tracking T-pose with the source T-pose
-        /// to calculate a scaling factor, then stores it for use during pose retargeting and blending.
-        ///
-        /// To prevent jittering from inconsistent pose lengths, only call this function when:
-        /// - Initializing the AIMotionSynthesizer (scale starts at 1.0)
-        /// - When the body tracking T-pose actually changes
-        ///
-        /// Do NOT call this function every frame, as varying pose lengths can cause jittering.
-        /// </summary>
-        /// <param name="handle">The AIMotionSynthesizer handle.</param>
-        /// <param name="targetTPose">Body tracking T-pose transforms to calculate scale from.</param>
-        /// <returns>True if the update was successful, false otherwise.</returns>
-        public static bool UpdateTPose(
-            UInt64 handle,
-            NativeArray<NativeTransform> targetTPose)
-        {
-            if (!targetTPose.IsCreated)
-            {
-                Debug.LogError("[MSDKAIMotionSynthesizer] UpdateTPose: targetTPose must be created");
-                return false;
-            }
-
-            Result success;
-            using (new ProfilerScope(nameof(UpdateTPose)))
-            {
-                unsafe
-                {
-                    success = AIMotionSynthesizerApi.metaMovementSDK_updateAIMotionSynthesizerTPose(
-                        handle,
-                        targetTPose.GetPtr(),
-                        targetTPose.Length);
-                }
-            }
-
-            if (success != Result.Success)
-            {
-                Debug.LogError($"[MSDKAIMotionSynthesizer] UpdateTPose failed with result: {success}");
             }
 
             return success == Result.Success;

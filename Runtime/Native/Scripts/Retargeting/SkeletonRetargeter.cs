@@ -262,6 +262,7 @@ namespace Meta.XR.Movement.Retargeting
         private ulong _nativeHandle = INVALID_HANDLE;
         private NativeArray<NativeTransform> _targetReferencePose;
         private NativeArray<int> _targetFingerIndices;
+        private NativeArray<byte> _mappedJointMask;
         private JobHandle _applyPoseJobHandle;
 
         /// <summary>
@@ -310,6 +311,19 @@ namespace Meta.XR.Movement.Retargeting
             SourceParentIndices = new NativeArray<int>(SourceSkeletonData.ParentIndices, Persistent);
             TargetParentIndices = new NativeArray<int>(TargetSkeletonData.ParentIndices, Persistent);
 
+            // Build mapped joint mask so ApplyPose skips unmapped target joints
+            // (e.g. eye bones that have no source in body tracking).
+            // Only allocate when mapping data is available; a default (empty) mask
+            // means "apply all joints" (backward compatible).
+            if (GetSkeletonMappingTargetJoints(_nativeHandle, out var mappedTargetJoints))
+            {
+                _mappedJointMask = new NativeArray<byte>(TargetSkeletonData.JointCount, Persistent);
+                foreach (int joint in mappedTargetJoints)
+                {
+                    _mappedJointMask[joint] = 1;
+                }
+            }
+
             // Setup T-Pose from native API.
             GetSkeletonTPoseByRef(_nativeHandle, SkeletonType.TargetSkeleton, SkeletonTPoseType.UnscaledTPose,
                 JointRelativeSpaceType.LocalSpace, ref TargetReferencePoseLocal);
@@ -341,6 +355,7 @@ namespace Meta.XR.Movement.Retargeting
             SourceReferencePose.Dispose();
             RetargetedPose.Dispose();
             RetargetedPoseLocal.Dispose();
+            TargetReferencePoseLocal.Dispose();
 
             // Dispose NativeArrays created from SkeletonData
             _targetFingerIndices.Dispose();
@@ -348,6 +363,10 @@ namespace Meta.XR.Movement.Retargeting
             SourceMaxTPose.Dispose();
             SourceParentIndices.Dispose();
             TargetParentIndices.Dispose();
+            if (_mappedJointMask.IsCreated)
+            {
+                _mappedJointMask.Dispose();
+            }
 
             // Destroy native handle.
             if (!DestroyHandle(_nativeHandle))
@@ -441,6 +460,7 @@ namespace Meta.XR.Movement.Retargeting
                 RotationOnlyIndices = _targetFingerIndices,
                 RootJointIndex = RootJointIndex,
                 HipsJointIndex = HipsJointIndex,
+                MappedJointMask = _mappedJointMask,
                 CurrentRotationIndex =
                     _retargetingBehavior == RetargetingBehavior.RotationsAndPositionsHandsRotationOnly ? 0 : -1
             };
