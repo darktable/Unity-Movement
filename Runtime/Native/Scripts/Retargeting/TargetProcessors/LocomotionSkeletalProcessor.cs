@@ -49,8 +49,8 @@ namespace Meta.XR.Movement.Retargeting
 
         public string AnimatorHorizontalParam
         {
-            get => _animatorVerticalParam;
-            set => _animatorVerticalParam = value;
+            get => _animatorHorizontalParam;
+            set => _animatorHorizontalParam = value;
         }
 
         public float AnimationSpeed

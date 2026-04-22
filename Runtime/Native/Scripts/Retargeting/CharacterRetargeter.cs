@@ -80,6 +80,24 @@ namespace Meta.XR.Movement.Retargeting
         }
 
         /// <summary>
+        /// True if debug draw of the source T-pose should be enabled.
+        /// </summary>
+        public bool DebugDrawSourceTPose
+        {
+            get => _debugDrawSourceTPose;
+            set => _debugDrawSourceTPose = value;
+        }
+
+        /// <summary>
+        /// True if debug draw of the target T-pose should be enabled.
+        /// </summary>
+        public bool DebugDrawTargetTPose
+        {
+            get => _debugDrawTargetTPose;
+            set => _debugDrawTargetTPose = value;
+        }
+
+        /// <summary>
         /// Use this to wait for the convert pose job to complete.
         /// </summary>
         public JobHandle ConvertPoseJobHandle => _convertPoseJobHandle;
@@ -99,7 +117,7 @@ namespace Meta.XR.Movement.Retargeting
         /// The color to use when drawing the source skeleton debug visualization.
         /// </summary>
         [SerializeField]
-        protected Color _debugDrawSourceSkeletonColor = Color.white;
+        protected Color _debugDrawSourceSkeletonColor = new(0.5f, 0.75f, 1f);
 
         /// <summary>
         /// Whether to draw debug visualization for the target skeleton.
@@ -111,7 +129,7 @@ namespace Meta.XR.Movement.Retargeting
         /// The color to use when drawing the target skeleton debug visualization.
         /// </summary>
         [SerializeField]
-        protected Color _debugDrawTargetSkeletonColor = Color.green;
+        protected Color _debugDrawTargetSkeletonColor = new(1f, 0.75f, 0.5f);
 
         /// <summary>
         /// The color to use when drawing an invalid target skeleton debug visualization.
@@ -124,6 +142,30 @@ namespace Meta.XR.Movement.Retargeting
         /// </summary>
         [SerializeField]
         protected Color _debugDrawInvalidSourceSkeletonColor = Color.magenta;
+
+        /// <summary>
+        /// Whether to draw debug visualization for the source T-pose skeleton.
+        /// </summary>
+        [SerializeField]
+        protected bool _debugDrawSourceTPose;
+
+        /// <summary>
+        /// The color to use when drawing the source T-pose skeleton debug visualization.
+        /// </summary>
+        [SerializeField]
+        protected Color _debugDrawSourceTPoseColor = new(0f, 0.5f, 1f);
+
+        /// <summary>
+        /// Whether to draw debug visualization for the target T-pose skeleton.
+        /// </summary>
+        [SerializeField]
+        protected bool _debugDrawTargetTPose;
+
+        /// <summary>
+        /// The color to use when drawing the target T-pose skeleton debug visualization.
+        /// </summary>
+        [SerializeField]
+        protected Color _debugDrawTargetTPoseColor = new(1f, 0.5f, 0f);
 
         /// <summary>
         /// The skeleton retargeter instance used for retargeting operations.
@@ -216,6 +258,11 @@ namespace Meta.XR.Movement.Retargeting
                 if (_debugDrawTargetSkeleton)
                 {
                     _skeletonRetargeter.DrawInvalidTargetPose(_debugDrawInvalidTargetSkeletonColor);
+                }
+
+                if (_debugDrawTargetTPose)
+                {
+                    _skeletonRetargeter.DrawDebugTargetTPose(_debugDrawTransform, _debugDrawTargetTPoseColor);
                 }
 
                 return;
@@ -361,6 +408,11 @@ namespace Meta.XR.Movement.Retargeting
             {
                 _skeletonRetargeter.DrawDebugSourcePose(_debugDrawTransform, _debugDrawSourceSkeletonColor);
             }
+
+            if (_debugDrawSourceTPose)
+            {
+                _skeletonRetargeter.DrawDebugSourceTPose(_debugDrawTransform, _debugDrawSourceTPoseColor);
+            }
         }
 
         /// <summary>
@@ -392,6 +444,11 @@ namespace Meta.XR.Movement.Retargeting
                 {
                     _skeletonRetargeter.DrawInvalidTargetPose(_debugDrawInvalidTargetSkeletonColor);
                 }
+            }
+
+            if (_debugDrawTargetTPose)
+            {
+                _skeletonRetargeter.DrawDebugTargetTPose(_debugDrawTransform, _debugDrawTargetTPoseColor);
             }
         }
 

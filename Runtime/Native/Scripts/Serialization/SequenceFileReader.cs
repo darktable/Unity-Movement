@@ -3,10 +3,8 @@
 using Meta.XR.Movement.Playback;
 using Meta.XR.Movement.Retargeting;
 using System;
-using System.Globalization;
 using System.IO;
 using Unity.Collections;
-using Unity.Jobs;
 using UnityEngine;
 using static Meta.XR.Movement.MSDKUtility;
 
@@ -27,17 +25,13 @@ namespace Meta.XR.Movement.Recording
         public bool HasOpenedFileForPlayback => _playbackManager.HasActivePlaybackFile;
 
         /// <inheritdoc cref="IRecordingBehaviour.BandwidthKbps"/>
-        public float BandwidthKbps => _bandwidthRecorder.BandwidthKbps;
-        private BandwidthRecorder _bandwidthRecorder = new BandwidthRecorder();
+        public float BandwidthKbps => _playbackManager.BandwidthKbps;
 
         /// <inheritdoc cref="IPlaybackBehaviour.UserActivelyScrubbing"/>
         public bool UserActivelyScrubbing
         {
-            get => _activelyScrubbing;
-            set
-            {
-                _activelyScrubbing = value;
-            }
+            get => _playbackManager.IsActivelyScrubbing;
+            set => _playbackManager.IsActivelyScrubbing = value;
         }
 
         /// <summary>
@@ -48,7 +42,7 @@ namespace Meta.XR.Movement.Recording
         /// <summary>
         /// Gets whether the playback is currently active and not paused.
         /// </summary>
-        public bool IsPlaying => _playbackManager.HasActivePlaybackFile && !_pauseState;
+        public bool IsPlaying => _playbackManager.HasActivePlaybackFile && !_playbackManager.IsPaused;
 
         /// <summary>
         /// Gets the current playback time in seconds relative to the start time.
@@ -57,17 +51,13 @@ namespace Meta.XR.Movement.Recording
 
         private UInt64 _playbackHandle;
 
-        private SequencePlaybackManager _playbackManager =
-                           new SequencePlaybackManager();
+        private SequencePlaybackManager _playbackManager = new SequencePlaybackManager();
 
         private NativeArray<NativeTransform> _deserSourcePose;
         private SerializationCompressionType _receivedCompressionType;
-        private CoordinateSpace _recordingCoordinateSpaceSource;
 
         private int _numSourceJoints;
         private int[] _sourceParentIndices;
-        private bool _activelyScrubbing;
-        private bool _pauseState = false;
 
         ~SequenceFileReader()
         {
@@ -88,6 +78,11 @@ namespace Meta.XR.Movement.Recording
                 Allocator.Temp, NativeArrayOptions.UninitializedMemory);
             GetParentJointIndexesByRef(_playbackHandle, SkeletonType.SourceSkeleton, ref nativeSourceParentIndices);
             _sourceParentIndices = nativeSourceParentIndices.ToArray();
+
+            // Set up playback manager delegates
+            _playbackManager.DeserializeDelegate = DeserializeData;
+            _playbackManager.LerpDelegate = LerpReceivedData;
+            _playbackManager.ProcessDelegate = ProcessReceivedData;
         }
 
         /// <inheritdoc cref="IPlaybackBehaviour.Seek(int)"/>
@@ -95,9 +90,7 @@ namespace Meta.XR.Movement.Recording
         {
             return _playbackManager.Seek(
                 _playbackHandle,
-                snapshotIndex,
-                ProcessSnapshotGetNetworkTimeDelegate,
-                DeserializeData);
+                snapshotIndex);
         }
 
         /// <inheritdoc cref="IPlaybackBehaviour.PlaybackRecording"/>
@@ -110,7 +103,7 @@ namespace Meta.XR.Movement.Recording
             {
                 MSDKUtility.ResetInterpolators(_playbackHandle);
                 _playbackManager.ResetTimestampsToStart();
-                _pauseState = false;
+                _playbackManager.IsPaused = false;
             }
             return _playbackManager.HasActivePlaybackFile;
         }
@@ -118,7 +111,7 @@ namespace Meta.XR.Movement.Recording
         /// <inheritdoc cref="IPlaybackBehaviour.SetPauseState(bool)"/>
         public void SetPauseState(bool pauseState)
         {
-            _pauseState = pauseState;
+            _playbackManager.IsPaused = pauseState;
         }
 
         /// <inheritdoc cref="IPlaybackBehaviour.ClosePlaybackFile"/>
@@ -133,51 +126,10 @@ namespace Meta.XR.Movement.Recording
         /// </summary>
         public void PlayNextFrame()
         {
-            if (_activelyScrubbing)
-            {
-                return;
-            }
-
-            if (_pauseState)
-            {
-                return;
-            }
-
-            _playbackManager.NetworkTime += Time.deltaTime;
-            if (_playbackManager.ReadAllSnapshots)
-            {
-                _playbackManager.ResetTimestampsToStart();
-                _playbackManager.RestartSnapshotReading();
-                ResetInterpolators(_playbackHandle);
-            }
-
-            if (_playbackManager.NetworkTime < _playbackManager.LastTimeStamp && _playbackManager.NetworkTime > 0.0f)
-            {
-                return;
-            }
-            byte[] snapshotBytes = _playbackManager.ReadNextSnapshotBytes();
-            if (snapshotBytes != null)
-            {
-                float readTimestamp = ProcessSnapshotGetNetworkTimeDelegate(snapshotBytes);
-                _playbackManager.LastTimeStamp = (float)readTimestamp;
-            }
-        }
-
-        /// <summary>
-        /// Processes snapshot bytes and returns the network time.
-        /// This method is used as a delegate for snapshot processing during playback.
-        /// </summary>
-        /// <param name="snapshotBytes">The snapshot bytes to process.</param>
-        /// <returns>The network time of the processed snapshot.</returns>
-        public float ProcessSnapshotGetNetworkTimeDelegate(
-            byte[] snapshotBytes)
-        {
-            return _playbackManager.ProcessSnapshotBytesAndGetNetworkTime(
-                snapshotBytes,
-                _activelyScrubbing,
-                DeserializeData,
-                LerpReceivedData,
-                ProcessReceivedData);
+            _playbackManager.AdvanceFrame(
+                _playbackHandle,
+                Time.deltaTime,
+                out byte[] snapshotBytes);
         }
 
         private void LerpReceivedData()
@@ -206,30 +158,27 @@ namespace Meta.XR.Movement.Recording
             {
                 nativeBytes[i] = bytes[i];
             }
-            // Create dummy arguments for deserialized data that we don't care about.
-            var emptyBody = new NativeArray<NativeTransform>(1, Allocator.Temp);
-            var emptyFace = new NativeArray<float>(1, Allocator.Temp);
-            var frameData = new FrameData();
+
             var bindPose = new NativeArray<NativeTransform>(_numSourceJoints, Allocator.Temp);
-            int numBindPose = 0;
+            var deserializedSnapshotData = new DeserializedSnapshotData
+            {
+                DataVersion = _playbackManager.DataVersion,
+                TargetSkeletonPose = new NativeArray<NativeTransform>(1, Allocator.Temp),
+                FacePose = new NativeArray<float>(1, Allocator.Temp),
+                SourceSkeletonPose = _deserSourcePose,
+                BindPose = bindPose
+            };
+
             if (!DeserializeSkeletonAndFace(
                     _playbackHandle,
                     nativeBytes,
-                    _playbackManager.DataVersion,
-                    out var timestamp,
-                    out _receivedCompressionType,
-                    out var ack,
-                    ref emptyBody,
-                    ref emptyFace,
-                    ref _deserSourcePose,
-                    ref frameData,
-                    ref bindPose,
-                    out numBindPose,
-                    out _recordingCoordinateSpaceSource))
+                    ref deserializedSnapshotData))
             {
                 Debug.LogError("Data deserialized is invalid!");
                 return false;
             }
+
+            _receivedCompressionType = deserializedSnapshotData.CompressionType;
             return true;
         }
 

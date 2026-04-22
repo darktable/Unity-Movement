@@ -1,7 +1,6 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
 
 using System;
-using System.Globalization;
 using System.IO;
 using Unity.Collections;
 using UnityEditor;

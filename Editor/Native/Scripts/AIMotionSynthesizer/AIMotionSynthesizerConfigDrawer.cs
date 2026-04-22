@@ -8,12 +8,19 @@ namespace Meta.XR.Movement.AI.Editor
     [CustomPropertyDrawer(typeof(AIMotionSynthesizerConfig))]
     public class AIMotionSynthesizerConfigDrawer : PropertyDrawer
     {
-        private const string _basePath = "Packages/com.meta.xr.sdk.movement/Runtime/Native/";
+        private const string BasePath = "Packages/com.meta.xr.sdk.movement/Runtime/Native/";
 
-        private static readonly Color _headerColor = new Color(0.3f, 0.5f, 0.7f, 0.2f);
-        private static readonly Color _blendColor = new Color(0.4f, 0.7f, 0.4f, 0.15f);
-        private static readonly Color _motionColor = new Color(0.7f, 0.5f, 0.3f, 0.15f);
-        private static readonly Color _debugColor = new Color(0.5f, 0.3f, 0.7f, 0.15f);
+        private static readonly Color HeaderColor = new(0.3f, 0.5f, 0.7f, 0.2f);
+        private static readonly Color BlendColor = new(0.4f, 0.7f, 0.4f, 0.15f);
+        private static readonly Color MotionColor = new(0.7f, 0.5f, 0.3f, 0.15f);
+        private static readonly Color DebugColor = new(0.5f, 0.3f, 0.7f, 0.15f);
+
+        private static readonly (string prop, string path)[] DefaultAssets =
+        {
+            ("Config", "Data/AIMotionSynthesizerSkeletonData.json"),
+            ("ModelAsset", "Data/AIMotionSynthesizerModel.bytes"),
+            ("GuidanceAsset", "Data/AIMotionSynthesizerGuidance.bytes")
+        };
 
         public override float GetPropertyHeight(SerializedProperty property, GUIContent label) => -1;
 
@@ -28,78 +35,75 @@ namespace Meta.XR.Movement.AI.Editor
             if (property.isExpanded)
             {
                 EditorGUI.indentLevel++;
-
-                AIMotionSynthesizerEditorUtils.DrawSection("Assets", _headerColor, () =>
-                {
-                    EditorGUILayout.PropertyField(property.FindPropertyRelative("Config"));
-                    EditorGUILayout.PropertyField(property.FindPropertyRelative("ModelAsset"));
-                    EditorGUILayout.PropertyField(property.FindPropertyRelative("GuidanceAsset"));
-
-                    EditorGUILayout.Space(4);
-
-                    if (GUILayout.Button("Load Default Assets"))
-                    {
-                        LoadAssets(property);
-                    }
-                });
-
-                EditorGUILayout.Space(4);
-
-                AIMotionSynthesizerEditorUtils.DrawSection("Blend Settings", _blendColor, () => DrawBlendSettings(property));
-
-                EditorGUILayout.Space(4);
-
-                AIMotionSynthesizerEditorUtils.DrawSection("Motion", _motionColor, () =>
-                {
-                    var rootMotionModeProp = property.FindPropertyRelative("RootMotionMode");
-                    if (rootMotionModeProp != null)
-                    {
-                        EditorGUILayout.PropertyField(rootMotionModeProp);
-
-                        if (rootMotionModeProp.enumValueIndex == (int)RootMotionMode.ApplyFromReference)
-                        {
-                            var referenceTransformProp = property.FindPropertyRelative("ReferenceTransform");
-                            if (referenceTransformProp != null)
-                            {
-                                EditorGUILayout.PropertyField(referenceTransformProp);
-                            }
-                        }
-                    }
-                });
-
-                EditorGUILayout.Space(4);
-
-                AIMotionSynthesizerEditorUtils.DrawSection("Debug", _debugColor, () =>
-                {
-                    EditorGUILayout.PropertyField(property.FindPropertyRelative("DebugDrawAIMotionSynthesizer"));
-
-                    if (property.FindPropertyRelative("DebugDrawAIMotionSynthesizer").boolValue)
-                    {
-                        EditorGUILayout.PropertyField(property.FindPropertyRelative("DebugAIMotionSynthesizerColor"));
-                    }
-                });
-
+                DrawAllSections(property);
                 EditorGUI.indentLevel--;
             }
+
             EditorGUI.EndProperty();
+        }
+
+        private void DrawAllSections(SerializedProperty property)
+        {
+            AIMotionSynthesizerEditorUtils.DrawSection("Assets", HeaderColor, () =>
+            {
+                EditorGUILayout.PropertyField(property.FindPropertyRelative("Config"));
+                EditorGUILayout.PropertyField(property.FindPropertyRelative("ModelAsset"));
+                EditorGUILayout.PropertyField(property.FindPropertyRelative("GuidanceAsset"));
+                EditorGUILayout.Space(4);
+                if (GUILayout.Button("Load Default Assets"))
+                {
+                    LoadAssets(property);
+                }
+            });
+
+            EditorGUILayout.Space(4);
+
+            AIMotionSynthesizerEditorUtils.DrawSection("Blend Settings", BlendColor, () => DrawBlendSettings(property));
+
+            EditorGUILayout.Space(4);
+
+            AIMotionSynthesizerEditorUtils.DrawSection("Motion", MotionColor, () =>
+            {
+                var rootMotionModeProp = property.FindPropertyRelative("RootMotionMode");
+                if (rootMotionModeProp == null)
+                {
+                    return;
+                }
+
+                EditorGUILayout.PropertyField(rootMotionModeProp);
+                if (rootMotionModeProp.enumValueIndex == (int)RootMotionMode.ApplyFromReference)
+                {
+                    var referenceProp = property.FindPropertyRelative("ReferenceTransform");
+                    if (referenceProp != null)
+                    {
+                        EditorGUILayout.PropertyField(referenceProp);
+                    }
+                }
+            });
+
+            EditorGUILayout.Space(4);
+
+            AIMotionSynthesizerEditorUtils.DrawSection("Debug", DebugColor, () =>
+            {
+                var debugProp = property.FindPropertyRelative("DebugDrawAIMotionSynthesizer");
+                EditorGUILayout.PropertyField(debugProp);
+                if (debugProp.boolValue)
+                {
+                    EditorGUILayout.PropertyField(property.FindPropertyRelative("DebugAIMotionSynthesizerColor"));
+                }
+            });
         }
 
         private void AutoAssignFilesAndInputProvider(SerializedProperty property)
         {
             bool changed = false;
 
-            var files = new[] {
-                ("Config", "Data/AIMotionSynthesizerSkeletonData.json"),
-                ("ModelAsset", "Data/AIMotionSynthesizerModel.bytes"),
-                ("GuidanceAsset", "Data/AIMotionSynthesizerGuidance.bytes")
-            };
-
-            foreach (var (prop, path) in files)
+            foreach (var (prop, path) in DefaultAssets)
             {
                 var p = property.FindPropertyRelative(prop);
                 if (p?.objectReferenceValue == null)
                 {
-                    var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(_basePath + path);
+                    var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(BasePath + path);
                     if (asset != null)
                     {
                         p.objectReferenceValue = asset;
@@ -109,17 +113,14 @@ namespace Meta.XR.Movement.AI.Editor
             }
 
             var inputProviderProp = property.FindPropertyRelative("InputProvider");
-            if (inputProviderProp?.objectReferenceValue == null)
+            if (inputProviderProp?.objectReferenceValue == null &&
+                property.serializedObject.targetObject is MonoBehaviour mb)
             {
-                var serializedObject = property.serializedObject;
-                if (serializedObject.targetObject is MonoBehaviour mb)
+                var inputProvider = mb.GetComponent<IAIMotionSynthesizerInputProvider>();
+                if (inputProvider != null)
                 {
-                    var inputProvider = mb.GetComponent<IAIMotionSynthesizerInputProvider>();
-                    if (inputProvider != null)
-                    {
-                        inputProviderProp.objectReferenceValue = inputProvider as MonoBehaviour;
-                        changed = true;
-                    }
+                    inputProviderProp.objectReferenceValue = inputProvider as MonoBehaviour;
+                    changed = true;
                 }
             }
 
@@ -145,19 +146,13 @@ namespace Meta.XR.Movement.AI.Editor
 
         private void LoadAssets(SerializedProperty property)
         {
-            var files = new[] {
-                ("Config", "Data/AIMotionSynthesizerSkeletonData.json"),
-                ("ModelAsset", "AIMotionSynthesizer/AIMotionSynthesizerModel.bytes"),
-                ("StyleAsset", "AIMotionSynthesizer/AIMotionSynthesizerStyle.bytes")
-            };
-
             bool changed = false;
-            foreach (var (prop, path) in files)
+            foreach (var (prop, path) in DefaultAssets)
             {
                 var p = property.FindPropertyRelative(prop);
                 if (p?.objectReferenceValue == null)
                 {
-                    var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(_basePath + path);
+                    var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(BasePath + path);
                     if (asset != null)
                     {
                         p.objectReferenceValue = asset;
@@ -165,7 +160,11 @@ namespace Meta.XR.Movement.AI.Editor
                     }
                 }
             }
-            if (changed) property.serializedObject.ApplyModifiedProperties();
+
+            if (changed)
+            {
+                property.serializedObject.ApplyModifiedProperties();
+            }
         }
 
         private void DrawBlendSettings(SerializedProperty property)
@@ -185,18 +184,20 @@ namespace Meta.XR.Movement.AI.Editor
                 }
             }
 
-            var enableSynthesizedStandingPoseProp = property.FindPropertyRelative("EnableSynthesizedStandingPose");
-            if (enableSynthesizedStandingPoseProp != null)
+            var synthPoseProp = property.FindPropertyRelative("EnableSynthesizedStandingPose");
+            if (synthPoseProp != null)
             {
-                EditorGUILayout.PropertyField(enableSynthesizedStandingPoseProp,
+                EditorGUILayout.PropertyField(synthPoseProp,
                     new GUIContent("Enable Synthesized Standing Pose",
                         "When enabled, uses synthesized standing pose with blend factor always set to 1 instead of the blended pose."));
+
+                if (!synthPoseProp.boolValue)
+                {
+                    DrawBodySourceSettings(property);
+                }
             }
 
-            if (enableSynthesizedStandingPoseProp == null || !enableSynthesizedStandingPoseProp.boolValue)
-            {
-                DrawBodySourceSettings(property);
-            }
+            DrawRootAlignmentDirection(property);
         }
 
         private void DrawManualBlendMode(SerializedProperty property)
@@ -207,17 +208,8 @@ namespace Meta.XR.Movement.AI.Editor
                 EditorGUILayout.Slider(blendProp, 0f, 1f, new GUIContent("Blend Factor"));
             }
 
-            var manualVelocityProp = property.FindPropertyRelative("ManualVelocity");
-            if (manualVelocityProp != null)
-            {
-                EditorGUILayout.PropertyField(manualVelocityProp);
-            }
-
-            var manualDirectionProp = property.FindPropertyRelative("ManualDirection");
-            if (manualDirectionProp != null)
-            {
-                EditorGUILayout.PropertyField(manualDirectionProp);
-            }
+            DrawPropertyIfExists(property, "ManualVelocity");
+            DrawPropertyIfExists(property, "ManualDirection");
         }
 
         private void DrawInputBlendMode(SerializedProperty property)
@@ -240,57 +232,54 @@ namespace Meta.XR.Movement.AI.Editor
                 }
             }
 
-            var blendInTimeProp = property.FindPropertyRelative("BlendInTime");
-            if (blendInTimeProp != null)
-            {
-                EditorGUILayout.PropertyField(blendInTimeProp);
-            }
+            DrawPropertyIfExists(property, "BlendInTime");
+            DrawPropertyIfExists(property, "BlendOutTime");
+            DrawPropertyIfExists(property, "InputActiveThreshold");
+        }
 
-            var blendOutTimeProp = property.FindPropertyRelative("BlendOutTime");
-            if (blendOutTimeProp != null)
+        private static void DrawPropertyIfExists(SerializedProperty property, string name)
+        {
+            var prop = property.FindPropertyRelative(name);
+            if (prop != null)
             {
-                EditorGUILayout.PropertyField(blendOutTimeProp);
-            }
-
-            var inputActiveThresholdProp = property.FindPropertyRelative("InputActiveThreshold");
-            if (inputActiveThresholdProp != null)
-            {
-                EditorGUILayout.PropertyField(inputActiveThresholdProp);
+                EditorGUILayout.PropertyField(prop);
             }
         }
 
         private void DrawBodySourceSettings(SerializedProperty property)
         {
-            var upperBodySourceProp = property.FindPropertyRelative("UpperBodySource");
-            if (upperBodySourceProp != null)
-            {
-                EditorGUILayout.PropertyField(upperBodySourceProp);
-            }
+            DrawPropertyIfExists(property, "UpperBodySource");
+            DrawPropertyIfExists(property, "LowerBodySource");
+        }
 
-            var lowerBodySourceProp = property.FindPropertyRelative("LowerBodySource");
-            if (lowerBodySourceProp != null)
+        private void DrawRootAlignmentDirection(SerializedProperty property)
+        {
+            var prop = property.FindPropertyRelative("RootAlignmentDirection");
+            if (prop != null)
             {
-                EditorGUILayout.PropertyField(lowerBodySourceProp);
+                EditorGUILayout.PropertyField(prop,
+                    new GUIContent("Root Alignment",
+                        "Which pose's forward direction to align to during blending. " +
+                        "BodyTracking: blended result follows user's facing direction. " +
+                        "AIMotionSynthesizer: blended result follows procedural animation direction."));
             }
         }
 
         private void AddDefaultInputProvider(SerializedProperty property)
         {
-            var serializedObject = property.serializedObject;
-            if (serializedObject.targetObject is MonoBehaviour mb)
+            if (property.serializedObject.targetObject is not MonoBehaviour mb)
             {
-                var existingJoystickInput = mb.GetComponent<AIMotionSynthesizerJoystickInput>();
-                if (existingJoystickInput == null)
-                {
-                    existingJoystickInput = Undo.AddComponent<AIMotionSynthesizerJoystickInput>(mb.gameObject);
-                }
+                return;
+            }
 
-                var inputProviderProp = property.FindPropertyRelative("InputProvider");
-                if (inputProviderProp != null)
-                {
-                    inputProviderProp.objectReferenceValue = existingJoystickInput;
-                    property.serializedObject.ApplyModifiedProperties();
-                }
+            var existingInput = mb.GetComponent<AIMotionSynthesizerJoystickInput>() ??
+                               Undo.AddComponent<AIMotionSynthesizerJoystickInput>(mb.gameObject);
+
+            var inputProviderProp = property.FindPropertyRelative("InputProvider");
+            if (inputProviderProp != null)
+            {
+                inputProviderProp.objectReferenceValue = existingInput;
+                property.serializedObject.ApplyModifiedProperties();
             }
         }
     }

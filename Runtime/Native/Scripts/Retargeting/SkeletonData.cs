@@ -313,6 +313,9 @@ namespace Meta.XR.Movement.Retargeting
         [SerializeField] private int _rightLowerLegJointIndex = -1;
         [SerializeField] private int[] _fingerIndices;
         [SerializeField] private string[] _manifestations;
+        [SerializeField] private SkeletonFlags _flags;
+
+        public SkeletonFlags Flags => _flags;
 
         /// <summary>
         /// Array of poses representing the T-pose configuration of the skeleton.
@@ -451,6 +454,7 @@ namespace Meta.XR.Movement.Retargeting
             // Get skeleton info
             GetSkeletonInfo(configHandle, skeletonType, out var skeletonInfo);
             var jointCount = skeletonInfo.JointCount;
+            skeletonData._flags = skeletonInfo.Flags;
 
             // Extract joint hierarchy data using MSDKUtility API
             GetJointNames(configHandle, skeletonType, out var joints);
@@ -567,6 +571,12 @@ namespace Meta.XR.Movement.Retargeting
             // Set other properties
             skeletonData._manifestations = skeletonData.ManifestationNames;
 
+            if (IsOVRSkeleton(skeletonData._joints))
+            {
+                // Enable NoRotationCorrectionOnCoordConversion to preserve x-engine compatibility
+                skeletonData._flags |= SkeletonFlags.NoRotationCorrectionOnCoordConversion;
+            }
+
             parentIndices.Dispose();
             tPose.Dispose();
             tPoseMin.Dispose();
@@ -581,7 +591,7 @@ namespace Meta.XR.Movement.Retargeting
         /// </summary>
         /// <param name="target">The root transform of the skeleton hierarchy.</param>
         /// <returns>A new SkeletonData instance created from the transform hierarchy, or null if the hierarchy is invalid.</returns>
-        public static SkeletonData CreateFromTransform(Transform target)
+        public static SkeletonData CreateFromTransform(Transform target, SkeletonFlags skeletonFlags = SkeletonFlags.None)
         {
             var jointMapping = MSDKUtilityHelper.GetChildParentJointMapping(target, out var root);
             if (jointMapping == null)
@@ -605,10 +615,13 @@ namespace Meta.XR.Movement.Retargeting
 
             // Check if this is an OVRSkeleton by seeing if joints match FullBodyTrackingBoneId names
             var isOVRSkeleton = IsOVRSkeleton(jointMapping);
+            data._flags = skeletonFlags;
 
             // First pass: assign indices to all joints
             if (isOVRSkeleton)
             {
+                // Enable NoRotationCorrectionOnCoordConversion to preserve x-engine compatibility
+                data._flags |= SkeletonFlags.NoRotationCorrectionOnCoordConversion;
                 // For OVRSkeleton, order joints by FullBodyTrackingBoneId enum order
                 var orderedJoints = OrderJointsByFullBodyTrackingBoneId(jointMapping);
                 foreach (var joint in orderedJoints)
@@ -691,15 +704,10 @@ namespace Meta.XR.Movement.Retargeting
             return data;
         }
 
-        /// <summary>
-        /// Checks if the joint mapping represents an OVRSkeleton by verifying if joints match FullBodyTrackingBoneId names.
-        /// </summary>
-        /// <param name="jointMapping">The joint mapping to check.</param>
-        /// <returns>True if this is an OVRSkeleton, false otherwise.</returns>
-        private static bool IsOVRSkeleton(Dictionary<Transform, Transform> jointMapping)
+        private static HashSet<string> GetOVRBoneNames()
         {
             // Get all FullBodyTrackingBoneId enum names
-            var ovrBoneNames = new HashSet<string>();
+            var ovrBoneNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (FullBodyTrackingBoneId boneId in Enum.GetValues(typeof(FullBodyTrackingBoneId)))
             {
                 // Skip special markers
@@ -713,18 +721,66 @@ namespace Meta.XR.Movement.Retargeting
                 ovrBoneNames.Add(boneId.ToString());
             }
 
+            return ovrBoneNames;
+        }
+
+        private static HashSet<string> OVRBoneNames = GetOVRBoneNames();
+
+        public static Dictionary<string, string> OVRBoneAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "LeftHandLittlePinkyMetacarpal", nameof(FullBodyTrackingBoneId.LeftHandLittleMetacarpal) },
+            { "LeftHandLittlePinkyProximal", nameof(FullBodyTrackingBoneId.LeftHandLittleProximal) },
+            { "LeftHandLittlePinkyIntermediate", nameof(FullBodyTrackingBoneId.LeftHandLittleIntermediate) },
+            { "LeftHandLittlePinkyDistal", nameof(FullBodyTrackingBoneId.LeftHandLittleDistal) },
+            { "LeftHandLittlePinkyTip", nameof(FullBodyTrackingBoneId.LeftHandLittleTip) },
+            { "RightHandLittlePinkyMetacarpal", nameof(FullBodyTrackingBoneId.RightHandLittleMetacarpal) },
+            { "RightHandLittlePinkyProximal", nameof(FullBodyTrackingBoneId.RightHandLittleProximal) },
+            { "RightHandLittlePinkyIntermediate", nameof(FullBodyTrackingBoneId.RightHandLittleIntermediate) },
+            { "RightHandLittlePinkyDistal", nameof(FullBodyTrackingBoneId.RightHandLittleDistal) },
+            { "RightHandLittlePinkyTip", nameof(FullBodyTrackingBoneId.RightHandLittleTip) },
+        };
+
+        /// <summary>
+        /// Checks if the joint mapping represents an OVRSkeleton by verifying if joints match FullBodyTrackingBoneId names.
+        /// </summary>
+        /// <param name="jointMapping">The joint mapping to check.</param>
+        /// <returns>True if this is an OVRSkeleton, false otherwise.</returns>
+        private static bool IsOVRSkeleton(Dictionary<Transform, Transform> jointMapping, float requiredHitPct = 0.8f)
+        {
             // Check if at least 80% of the joints in the mapping match OVR bone names
             var matchCount = 0;
             foreach (var joint in jointMapping.Keys)
             {
-                if (ovrBoneNames.Contains(joint.name))
+                if (OVRBoneNames.Contains(joint.name) ||
+                    (OVRBoneAliases.TryGetValue(joint.name, out string jointAlias) && OVRBoneNames.Contains(jointAlias)))
                 {
                     matchCount++;
                 }
             }
 
             // If at least 80% of joints match OVR bone names, consider it an OVRSkeleton
-            return matchCount >= jointMapping.Count * 0.8f;
+            return matchCount >= jointMapping.Count * requiredHitPct;
+        }
+
+
+
+        private static bool IsOVRSkeleton(string[] jointNames, float requiredHitPct = 1.0f)
+        {
+            if (OVRBoneNames.Count <= 0 ||
+                ((float)(jointNames.Length) / (float)(OVRBoneNames.Count) < requiredHitPct))
+            {
+                return false;
+            }
+            var matchCount = 0;
+            foreach (var joint in jointNames)
+            {
+                if (OVRBoneNames.Contains(joint) ||
+                    (OVRBoneAliases.TryGetValue(joint, out string jointAlias) && OVRBoneNames.Contains(jointAlias)))
+                {
+                    matchCount++;
+                }
+            }
+            return (float)matchCount / (float)(OVRBoneNames.Count) >= requiredHitPct;
         }
 
         /// <summary>
@@ -847,7 +903,7 @@ namespace Meta.XR.Movement.Retargeting
         /// Fills a SkeletonInitParams structure with data from this SkeletonData instance.
         /// </summary>
         /// <returns>A SkeletonInitParams populated with this skeleton's data.</returns>
-        public SkeletonInitParams FillConfigInitParams()
+        public SkeletonInitParams FillConfigInitParams(SkeletonFlags additionalSkeletonFlags = SkeletonFlags.None)
         {
             var initParams = new SkeletonInitParams
             {
@@ -858,6 +914,7 @@ namespace Meta.XR.Movement.Retargeting
                 UnscaledTPose = new NativeArray<NativeTransform>(TPoseArray, Allocator.Temp),
                 MinTPose = new NativeArray<NativeTransform>(MinTPoseArray, Allocator.Temp),
                 MaxTPose = new NativeArray<NativeTransform>(MaxTPoseArray, Allocator.Temp),
+                JointSpaceType = JointRelativeSpaceType.RootOriginRelativeSpace,
                 // Optional data
                 OptionalKnownSourceJointNamesById = KnownJoints,
                 OptionalAutoMapJointData = GenerateAutoMappingExcludedJointDataFromJointNameList(AutoMapExcludedJointNames),
@@ -865,7 +922,8 @@ namespace Meta.XR.Movement.Retargeting
                 OptionalManifestationJointCounts = ManifestationJointCounts,
                 OptionalManifestationJointNames = ManifestationJointNames,
                 // Blend shape data (empty for skeleton data)
-                BlendShapeNames = Array.Empty<string>()
+                BlendShapeNames = Array.Empty<string>(),
+                SkeletonFlags = additionalSkeletonFlags | Flags,
             };
 
             return initParams;

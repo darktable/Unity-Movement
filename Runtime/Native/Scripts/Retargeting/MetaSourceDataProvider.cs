@@ -13,70 +13,49 @@ namespace Meta.XR.Movement.Retargeting
     /// </summary>
     public class MetaSourceDataProvider : OVRBody, ISourceDataProvider
     {
-        /// <summary>Enable debug skeleton visualization.</summary>
-        public bool DebugDrawSkeleton
-        {
-            get => _debugDrawSkeleton;
-            set => _debugDrawSkeleton = value;
-        }
-
-        /// <summary>Enable AI Motion Synthesizer blending with body tracking.</summary>
-        public bool EnableAIMotionSynthesizer
-        {
-            get => _enableAIMotionSynthesizer;
-            set => _enableAIMotionSynthesizer = value;
-        }
-
-        /// <summary>Manifestation name returned when using upper body tracking.</summary>
         public const string HalfBodyManifestation = "halfbody";
 
-        /// <summary>
-        /// Delay before body tracking is considered valid. Allows tracking to stabilize on startup.
-        /// </summary>
-        [SerializeField]
-        protected float _validBodyTrackingDelay = 0.25f;
+        private const int FullBodyJointCount = (int)SkeletonData.FullBodyTrackingBoneId.End;
+        private const int UpperBodyJointCount = (int)SkeletonData.BodyTrackingBoneId.End;
 
-        [Tooltip("Enable debug skeleton visualization")]
-        [SerializeField]
-        protected bool _debugDrawSkeleton;
+        public bool DebugDrawSkeleton { get => _debugDrawSkeleton; set => _debugDrawSkeleton = value; }
+        public bool EnableAIMotionSynthesizer { get => _enableAIMotionSynthesizer; set => _enableAIMotionSynthesizer = value; }
 
-        [Tooltip("Color for debug skeleton visualization")]
-        [SerializeField]
-        protected Color _debugSkeletonColor = Color.white;
+        [SerializeField] protected float _validBodyTrackingDelay = 0.25f;
+        [SerializeField] protected bool _debugDrawSkeleton;
+        [SerializeField] protected Color _debugSkeletonColor = Color.white;
+        [SerializeField] protected bool _enableAIMotionSynthesizer;
+        [SerializeField] protected AIMotionSynthesizerConfig _aiMotionSynthesizerConfig = new();
 
-        [Tooltip("Enable AI Motion Synthesizer for natural locomotion animations")]
-        [SerializeField]
-        protected bool _enableAIMotionSynthesizer;
-
-        /// <summary>AI Motion Synthesizer configuration. Only used when <see cref="_enableAIMotionSynthesizer"/> is true.</summary>
-        [SerializeField]
-        protected AIMotionSynthesizerConfig _aiMotionSynthesizerConfig = new();
         protected AI.AIMotionSynthesizer _aiMotionSynthesizer;
-
         protected OVRPlugin.BodyJointSet _currentSkeletonType;
         protected int _skeletalChangedCount = -1;
         protected int _currentSkeletalChangeCount = -1;
         protected float _currentValidBodyTrackingTime;
         protected bool _isValid;
 
+        private bool IsUpperBody => ProvidedSkeletonType == OVRPlugin.BodyJointSet.UpperBody;
+        private bool IsSynthesizerActive => _enableAIMotionSynthesizer && _aiMotionSynthesizer is { IsInitialized: true };
+
         protected virtual void Start()
         {
             _currentSkeletonType = ProvidedSkeletonType;
-
-            if (_enableAIMotionSynthesizer)
+            if (!_enableAIMotionSynthesizer)
             {
-                _aiMotionSynthesizer = new AI.AIMotionSynthesizer(_aiMotionSynthesizerConfig, transform);
-                _aiMotionSynthesizer.Initialize();
+                return;
             }
+            _aiMotionSynthesizer = new AI.AIMotionSynthesizer(_aiMotionSynthesizerConfig, transform);
+            _aiMotionSynthesizer.Initialize();
         }
 
         protected virtual void LateUpdate()
         {
-            if (_enableAIMotionSynthesizer)
+            if (!_enableAIMotionSynthesizer)
             {
-                _aiMotionSynthesizer.Update(Time.smoothDeltaTime);
-                _aiMotionSynthesizer.ApplyRootMotion();
+                return;
             }
+            _aiMotionSynthesizer.Update(Time.smoothDeltaTime);
+            _aiMotionSynthesizer.ApplyRootMotion();
         }
 
         protected virtual void OnDestroy()
@@ -92,109 +71,59 @@ namespace Meta.XR.Movement.Retargeting
         /// <inheritdoc />
         public virtual NativeArray<NativeTransform> GetSkeletonPose()
         {
-            var sourcePose = SkeletonUtilities.GetPosesFromTheTracker(
-                this,
-                Pose.identity,
-                true,
-                out _currentSkeletalChangeCount,
-                out _isValid);
-
+            var sourcePose = SkeletonUtilities.GetPosesFromTheTracker(this, Pose.identity, true, out _currentSkeletalChangeCount, out _isValid);
             if (_currentValidBodyTrackingTime < _validBodyTrackingDelay)
             {
                 _currentValidBodyTrackingTime += Time.smoothDeltaTime;
                 _isValid = false;
             }
-
-            NativeArray<NativeTransform> finalPose;
-            if (!_enableAIMotionSynthesizer || _aiMotionSynthesizer == null || !_aiMotionSynthesizer.IsInitialized)
-            {
-                finalPose = sourcePose;
-            }
-            else
-            {
-                NativeArray<NativeTransform> fullBodyPose = sourcePose;
-                bool createdFullBodyPose = false;
-                if (ProvidedSkeletonType == OVRPlugin.BodyJointSet.UpperBody)
-                {
-                    fullBodyPose = ConstructFullBodyPoseFromUpperBody(sourcePose);
-                    createdFullBodyPose = true;
-                }
-
-                var blendedPose = _aiMotionSynthesizer.GetBlendedPose(fullBodyPose);
-                _aiMotionSynthesizer.DrawVisualization(fullBodyPose, blendedPose, new Pose(transform.position, transform.rotation));
-
-                if (ProvidedSkeletonType == OVRPlugin.BodyJointSet.UpperBody)
-                {
-                    if (createdFullBodyPose)
-                    {
-                        fullBodyPose.Dispose();
-                    }
-                    finalPose = ExtractUpperBodyFromFullBodyPose(blendedPose);
-
-                    if (blendedPose.IsCreated)
-                    {
-                        blendedPose.Dispose();
-                    }
-                    if (sourcePose.IsCreated)
-                    {
-                        sourcePose.Dispose();
-                    }
-                }
-                else
-                {
-                    if (sourcePose.IsCreated)
-                    {
-                        sourcePose.Dispose();
-                    }
-                    finalPose = blendedPose;
-                }
-            }
-
             if (_debugDrawSkeleton)
             {
-                MeshDraw.DrawOVRSkeleton(this, _debugSkeletonColor);
+                MeshDraw.DrawOVRSkeleton(this, _debugSkeletonColor, 0.04f, new Pose(transform.position, transform.rotation));
             }
-
-            return finalPose;
+            if (!_isValid || !IsSynthesizerActive)
+            {
+                return sourcePose;
+            }
+            return IsUpperBody ? ProcessUpperBodyPose(sourcePose) : ProcessFullBodyPose(sourcePose);
         }
 
-        /// <summary>
-        /// Pads upper body pose to full body length with identity transforms for lower body.
-        /// </summary>
-        private NativeArray<NativeTransform> ConstructFullBodyPoseFromUpperBody(NativeArray<NativeTransform> upperBodyPose)
+        private NativeArray<NativeTransform> ProcessFullBodyPose(NativeArray<NativeTransform> sourcePose)
         {
-            const int fullBodyJointCount = (int)SkeletonData.FullBodyTrackingBoneId.End;
-            const int upperBodyJointCount = (int)SkeletonData.BodyTrackingBoneId.End;
-
-            var fullBodyPose = new NativeArray<NativeTransform>(fullBodyJointCount, Allocator.Temp);
-
-            for (var i = 0; i < upperBodyJointCount && i < upperBodyPose.Length; i++)
+            var blendedPose = _aiMotionSynthesizer.GetBlendedPose(sourcePose);
+            _aiMotionSynthesizer.DrawVisualization(sourcePose, blendedPose, new Pose(transform.position, transform.rotation));
+            if (sourcePose.IsCreated)
             {
-                fullBodyPose[i] = upperBodyPose[i];
+                sourcePose.Dispose();
             }
-
-            for (var i = upperBodyJointCount; i < fullBodyJointCount; i++)
-            {
-                fullBodyPose[i] = NativeTransform.Identity();
-            }
-
-            return fullBodyPose;
+            return blendedPose;
         }
 
-        /// <summary>
-        /// Extracts upper body joints from a full body pose array.
-        /// </summary>
-        private NativeArray<NativeTransform> ExtractUpperBodyFromFullBodyPose(NativeArray<NativeTransform> fullBodyPose)
+        private NativeArray<NativeTransform> ProcessUpperBodyPose(NativeArray<NativeTransform> sourcePose)
         {
-            const int upperBodyJointCount = (int)SkeletonData.BodyTrackingBoneId.End;
-
-            var upperBodyPose = new NativeArray<NativeTransform>(upperBodyJointCount, Allocator.Temp);
-
-            for (var i = 0; i < upperBodyJointCount && i < fullBodyPose.Length; i++)
+            var fullBodyPose = new NativeArray<NativeTransform>(FullBodyJointCount, Allocator.Temp);
+            var copyCount = Mathf.Min(UpperBodyJointCount, sourcePose.Length);
+            NativeArray<NativeTransform>.Copy(sourcePose, fullBodyPose, copyCount);
+            var identity = NativeTransform.Identity();
+            for (var i = UpperBodyJointCount; i < FullBodyJointCount; i++)
             {
-                upperBodyPose[i] = fullBodyPose[i];
+                fullBodyPose[i] = identity;
             }
 
+            var blendedPose = _aiMotionSynthesizer.GetBlendedPose(fullBodyPose);
+            _aiMotionSynthesizer.DrawVisualization(fullBodyPose, blendedPose, new Pose(transform.position, transform.rotation));
+            fullBodyPose.Dispose();
+
+            var upperBodyPose = new NativeArray<NativeTransform>(UpperBodyJointCount, Allocator.Temp);
+            NativeArray<NativeTransform>.Copy(blendedPose, upperBodyPose, Mathf.Min(UpperBodyJointCount, blendedPose.Length));
+            if (blendedPose.IsCreated)
+            {
+                blendedPose.Dispose();
+            }
+            if (sourcePose.IsCreated)
+            {
+                sourcePose.Dispose();
+            }
             return upperBodyPose;
         }
 
@@ -203,7 +132,7 @@ namespace Meta.XR.Movement.Retargeting
         {
             var sourcePose = SkeletonUtilities.GetBindPoses(this);
             _skeletalChangedCount = _currentSkeletalChangeCount;
-            if (_enableAIMotionSynthesizer && _aiMotionSynthesizer.IsInitialized)
+            if (IsSynthesizerActive)
             {
                 _aiMotionSynthesizer.UpdateTPose(sourcePose);
             }
@@ -213,7 +142,7 @@ namespace Meta.XR.Movement.Retargeting
         /// <inheritdoc />
         public virtual string GetManifestation()
         {
-            return _isValid && ProvidedSkeletonType == OVRPlugin.BodyJointSet.UpperBody ? HalfBodyManifestation : null;
+            return _isValid && IsUpperBody ? HalfBodyManifestation : null;
         }
 
         /// <inheritdoc />
@@ -229,7 +158,6 @@ namespace Meta.XR.Movement.Retargeting
             {
                 return _currentSkeletalChangeCount != _skeletalChangedCount;
             }
-
             _currentSkeletonType = ProvidedSkeletonType;
             return true;
         }

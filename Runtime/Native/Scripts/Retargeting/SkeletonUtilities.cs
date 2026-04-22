@@ -366,6 +366,12 @@ namespace Meta.XR.Movement.Retargeting
                 return invalidPoses;
             }
 
+            // Apply trackingSpace to the offset
+            Transform trackingSpace = GetTrackingSpaceTransform();
+            Matrix4x4 trackingToWorld = trackingSpace ? trackingSpace.localToWorldMatrix : Matrix4x4.identity;
+            offset.position = trackingToWorld.MultiplyPoint3x4(offset.position);
+            offset.rotation = trackingToWorld.rotation * offset.rotation;
+
             // Convert to native arrays
             var boneTranslations = GetBoneTranslations(_data.BoneTranslations);
             var boneRotations = GetBoneRotations(_data.BoneRotations);

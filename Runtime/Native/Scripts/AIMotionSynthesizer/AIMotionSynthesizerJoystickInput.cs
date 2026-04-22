@@ -5,10 +5,6 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 #endif
 
-#if UNITY_EDITOR
-using UnityEditor;
-#endif
-
 namespace Meta.XR.Movement.AI
 {
     /// <summary>
@@ -27,6 +23,42 @@ namespace Meta.XR.Movement.AI
     }
 
     /// <summary>
+    /// Movement direction mode for <see cref="AIMotionSynthesizerJoystickInput"/>.
+    /// </summary>
+    public enum MovementDirectionMode
+    {
+        /// <summary>
+        /// Relative: joystick input is relative to the reference transform.
+        /// Forward moves toward where the reference is facing.
+        /// </summary>
+        Relative,
+
+        /// <summary>
+        /// Absolute: joystick input maps directly to world axes.
+        /// Up=+Z, Down=-Z, Right=+X, Left=-X.
+        /// </summary>
+        Absolute
+    }
+
+    /// <summary>
+    /// Facing direction mode for <see cref="AIMotionSynthesizerJoystickInput"/>.
+    /// Controls how the character's facing direction is determined.
+    /// </summary>
+    public enum FacingDirectionMode
+    {
+        /// <summary>
+        /// Character faces the direction of movement velocity.
+        /// </summary>
+        FaceMovementDirection,
+
+        /// <summary>
+        /// Character maintains the reference transform's forward direction.
+        /// Useful for strafing or keeping focus on a target.
+        /// </summary>
+        FaceReferenceForward
+    }
+
+    /// <summary>
     /// Joystick input provider for AI Motion Synthesizer.
     /// Supports OVRInput, Unity Input System, or both simultaneously.
     /// </summary>
@@ -42,17 +74,16 @@ namespace Meta.XR.Movement.AI
         public bool IsInputActive() => _inputActive;
 
         /// <inheritdoc/>
-        public Transform GetReferenceTransform() => _referenceTransform;
+        public Transform GetReferenceTransform() => _referenceTransform != null ? _referenceTransform : transform;
 
         [SerializeField]
         [Tooltip("Select which input system to use")]
         private InputMode _inputMode = InputMode.OVRInput;
 
         [SerializeField]
-        [Tooltip("Reference transform for input calculations. Determines coordinate space for velocity/direction. Defaults to camera rig if not set.")]
+        [Tooltip(
+            "Reference transform for input calculations. Determines coordinate space for velocity/direction. If empty, uses this component's transform.")]
         private Transform _referenceTransform;
-
-        private OVRCameraRig _cameraRig;
 
 #if USE_UNITY_INPUT_SYSTEM
         [SerializeField]
@@ -105,60 +136,31 @@ namespace Meta.XR.Movement.AI
         [Range(0f, 1f)]
         private float _joystickThreshold = 0.25f;
 
+        [SerializeField]
+        [Tooltip("Movement direction mode: Relative or Absolute")]
+        private MovementDirectionMode _movementDirectionMode = MovementDirectionMode.Relative;
+
+        [SerializeField]
+        [Tooltip("Facing direction mode: determines how the character's facing direction is calculated")]
+        private FacingDirectionMode _facingDirectionMode = FacingDirectionMode.FaceMovementDirection;
+
+        [SerializeField]
+        [Tooltip("Lock direction at input start until stop. Useful for strafing.")]
+        private bool _lockDirectionOnInputStart;
+
         private bool _inputActive;
-        private Vector3 _currentVelocity = Vector3.zero;
+        private Vector3 _currentVelocity;
         private Vector3 _currentDirection = Vector3.forward;
-        private Vector3 _targetVelocity = Vector3.zero;
-        private Vector3 _actualVelocity = Vector3.zero;
+        private Vector3 _targetVelocity;
 
-        private void Start()
-        {
-            AutoAssignCameraRig();
-            if (_referenceTransform == null && _cameraRig != null)
-            {
-                _referenceTransform = _cameraRig.transform;
-            }
-        }
-
-#if UNITY_EDITOR
-        private void Reset()
-        {
-            AutoAssignCameraRig();
-            if (_referenceTransform == null && _cameraRig != null)
-            {
-                _referenceTransform = _cameraRig.transform;
-                EditorUtility.SetDirty(this);
-            }
-        }
-
-        private void OnValidate()
-        {
-            AutoAssignCameraRig();
-            if (_referenceTransform == null && _cameraRig != null)
-            {
-                _referenceTransform = _cameraRig.transform;
-                EditorUtility.SetDirty(this);
-            }
-        }
-#endif
+        private bool _hasCapturedMoveReferenceForward;
+        private Vector3 _capturedMoveReferenceForward = Vector3.forward;
+        private bool _hasCapturedLookReferenceForward;
+        private Vector3 _capturedLookReferenceForward = Vector3.forward;
 
         private void Update()
         {
             CalculateVelocityAndDirection();
-        }
-
-        private void AutoAssignCameraRig()
-        {
-            if (_cameraRig == null)
-            {
-                _cameraRig = FindAnyObjectByType<OVRCameraRig>();
-#if UNITY_EDITOR
-                if (_cameraRig != null)
-                {
-                    EditorUtility.SetDirty(this);
-                }
-#endif
-            }
         }
 
         private (Vector2 move, Vector2 look, bool sprint) ReadOVRInput()
@@ -217,47 +219,110 @@ namespace Meta.XR.Movement.AI
             }
         }
 
-        private Vector3 ApplyDeadzone(Vector3 input)
+        private Vector3 ApplyDeadzone(Vector2 input)
         {
-            return input.magnitude < _joystickThreshold
-                ? Vector3.zero
-                : Vector3.ClampMagnitude(input, 1f);
+            var input3D = new Vector3(input.x, 0f, input.y);
+            var magnitude = input3D.magnitude;
+            if (magnitude < _joystickThreshold)
+            {
+                return Vector3.zero;
+            }
+            var scaledMagnitude = (magnitude - _joystickThreshold) / (1f - _joystickThreshold);
+            return input3D.normalized * Mathf.Clamp01(scaledMagnitude);
+        }
+
+        private Vector3 GetReferenceForward(
+            bool hasInput,
+            Vector3 currentForward,
+            ref bool hasCapturedForward,
+            ref Vector3 capturedForward)
+        {
+            if (!_lockDirectionOnInputStart || !hasInput)
+            {
+                hasCapturedForward = false;
+                return currentForward;
+            }
+
+            if (!hasCapturedForward)
+            {
+                capturedForward = currentForward;
+                hasCapturedForward = true;
+            }
+            return capturedForward;
         }
 
         private void CalculateVelocityAndDirection()
         {
             var (moveInput, lookInput, isSprinting) = ReadInputForMode();
 
-            var referenceRotation = _referenceTransform != null
-                ? Quaternion.Euler(0, _referenceTransform.eulerAngles.y, 0)
-                : Quaternion.identity;
+            var move = ApplyDeadzone(moveInput);
+            var look = ApplyDeadzone(lookInput);
 
-            var move = ApplyDeadzone(new Vector3(moveInput.x, 0f, moveInput.y));
-            var look = ApplyDeadzone(new Vector3(lookInput.x, 0f, lookInput.y));
+            var currentReferenceForward = _referenceTransform != null
+                ? Vector3.ProjectOnPlane(_referenceTransform.forward, Vector3.up).normalized
+                : Vector3.forward;
 
-            _inputActive = move.magnitude > 0f || look.magnitude > 0f;
-
-            _targetVelocity = Vector3.zero;
-            if (move.magnitude > 0f)
+            if (currentReferenceForward.sqrMagnitude < 0.001f)
             {
-                var rotatedMove = referenceRotation * move;
-                var speedMultiplier = isSprinting ? _sprintSpeedFactor : _speedFactor;
-                _targetVelocity = rotatedMove * speedMultiplier;
+                currentReferenceForward = Vector3.forward;
             }
 
-            float deltaTime = Time.deltaTime;
-            var lerpFactor = _targetVelocity.magnitude > 0f ? _acceleration : _groundDamping;
-            var lerpTarget = _targetVelocity.magnitude > 0f ? _targetVelocity : Vector3.zero;
-            _actualVelocity = Vector3.Lerp(_actualVelocity, lerpTarget, lerpFactor * deltaTime);
+            var moveReferenceForward = GetReferenceForward(
+                move.magnitude > 0f,
+                currentReferenceForward,
+                ref _hasCapturedMoveReferenceForward,
+                ref _capturedMoveReferenceForward);
 
-            _currentVelocity = move.magnitude > 0f ? _targetVelocity : Vector3.zero;
+            var lookReferenceForward = GetReferenceForward(
+                look.magnitude > 0f,
+                currentReferenceForward,
+                ref _hasCapturedLookReferenceForward,
+                ref _capturedLookReferenceForward);
 
-            // Direction represents where the character wants to face.
-            // When look input is active (right stick), use the look direction for turn-in-place.
-            // Otherwise, default to camera forward.
-            _currentDirection = look.magnitude > 0f
-                ? (referenceRotation * look).normalized
-                : referenceRotation * Vector3.forward;
+            var moveRotation = GetDirectionRotation(moveReferenceForward);
+            var lookRotation = GetDirectionRotation(lookReferenceForward);
+
+            _inputActive = move.magnitude > 0f || look.magnitude > 0f;
+            _targetVelocity = Vector3.zero;
+
+            if (move.magnitude > 0f)
+            {
+                var worldMove = moveRotation * move;
+                var speed = isSprinting ? _sprintSpeedFactor : _speedFactor;
+                _targetVelocity = worldMove * speed;
+            }
+
+            var lerpRate = _targetVelocity.magnitude > 0f ? _acceleration : _groundDamping;
+            _currentVelocity = Vector3.Lerp(_currentVelocity, _targetVelocity, lerpRate * Time.deltaTime);
+
+            if (look.magnitude > 0f)
+            {
+                _currentDirection = lookRotation * look;
+            }
+            else if (move.magnitude > 0f)
+            {
+                if (_facingDirectionMode == FacingDirectionMode.FaceMovementDirection)
+                {
+                    _currentDirection = _targetVelocity;
+                }
+                else
+                {
+                    _currentDirection = currentReferenceForward;
+                }
+            }
+            else
+            {
+                _currentDirection = currentReferenceForward;
+            }
+        }
+
+        private Quaternion GetDirectionRotation(Vector3 referenceForward)
+        {
+            if (_movementDirectionMode == MovementDirectionMode.Absolute)
+            {
+                return Quaternion.identity;
+            }
+            return Quaternion.LookRotation(referenceForward, Vector3.up);
         }
 
 #if USE_UNITY_INPUT_SYSTEM
@@ -271,7 +336,13 @@ namespace Meta.XR.Movement.AI
         public void SetLookAction(InputActionReference lookAction) => _lookAction = lookAction;
 #endif
 
-        /// <summary>Sets the OVR camera rig used for input coordinate space.</summary>
-        public void SetCameraRig(OVRCameraRig cameraRig) => _cameraRig = cameraRig;
+        /// <summary>Sets the reference transform for input coordinate space.</summary>
+        public void SetReferenceTransform(Transform referenceTransform) => _referenceTransform = referenceTransform;
+
+        /// <summary>Sets the movement direction mode.</summary>
+        public void SetMovementDirectionMode(MovementDirectionMode mode) => _movementDirectionMode = mode;
+
+        /// <summary>Sets whether to lock direction at input start.</summary>
+        public void SetLockDirectionOnInputStart(bool locked) => _lockDirectionOnInputStart = locked;
     }
 }

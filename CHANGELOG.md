@@ -1,3 +1,25 @@
+## [201.0.0]
+
+## What's New
+- We're standardizing our OS versioning to provide more clarity on the scope and impact of each release. This helps you plan your development by making critical updates predictable and support documentation easier to navigate. Going forward, you'll see this new versioning system (e.g. OS 200, 201, etc.).
+- **Tracking space support**: Movement SDK now works correctly when `OVRCameraRig.trackingSpace` has a non-identity pose. Previously, the body-tracking avatar would detach from the user's body when used with features like MRUK World Locking.
+- **RootMotionMode support**: New `RootMotionMode` enum (`WorldSpace`/`LocalSpace`) in C# bindings, with root pose extraction via `GetPoseByRef` and root motion application option on `AIMotionSynthesizerSourceDataProvider`. Includes debug skeleton visualization.
+- **Networked root scale**: Root scale is now serialized as part of the snapshot header, enabling correct character scale in networked sessions without manual C# setup.
+- **Cross-engine config compatibility**: Added a skeleton flag and coordinate space conversion fixes so retargeting configs created in Unity work in Unreal (and vice versa). Existing configs continue to work on their original engine; new configs are cross-engine compatible.
+- **Improved auto-mapping**: KnownJoint detection algorithm now correctly identifies joints on previously failing rigs (Unreal Mannequin, Avatar Gen Mas). Auto Fill is now ~1-click for ~95% of character rigs. New reverse mapping utility lets configs daisy-chain rig→rig retargeting.
+
+## What's Changed
+- **Minimum Unity version raised from 2022.3 to Unity 6.**
+- **Joystick input improvements**: Reference forward calculation now uses `ProjectOnPlane`; removed automatic `OVRCameraRig` dependency (uses component's transform as default); direction logic considers movement direction when look input is inactive.
+- **Simplified C# serialization API**: Removed unused `createSnapshot` entry point. All C# serialization calls now use struct-based APIs.
+
+## What's Fixed
+- **Retargeter no longer overwrites eye bone transforms**: `CharacterRetargeter` now skips joints that have no mapping in the source body-tracking skeleton, allowing components like `OVREyeGaze` to control eyes without being clobbered each frame.
+- **`AnimatorHorizontalParam` fix** (resolves [Unity-Movement#133](https://github.com/oculus-samples/Unity-Movement/issues/133)).
+- **Memory leaks** caused by undisposed `Allocator.TempJob` allocations in `GetTrackerPosesAndIndices` and `SkeletonUtilities.GetPosesFromTheTracker`, plus a leak of `TargetReferencePoseLocal` (`Allocator.Persistent`) in `SkeletonRetargeter.Dispose`.
+- **`RootMotionMode` enum order restored** so Unity serialized values and dropdown entries match prior behavior.
+- **Unmapped joints with zero-length parents** no longer flicker/oscillate in debug draw; falls back to scale 1.0.
+
 ## [83.0.0]
 
 ## What's New

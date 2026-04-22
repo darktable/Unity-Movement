@@ -110,13 +110,6 @@ namespace Meta.XR.Movement.Networking.Local
         public void ReceiveStreamData(ulong clientId, bool isReliable, NativeArray<byte> bytes)
         {
             _target.ReceiveData(bytes);
-            // Custom scale implementation for transmitted data.
-            var targetScale = _self.transform.localScale;
-            if (Mathf.Abs(_receivedScale - targetScale.sqrMagnitude) >= 0.1f)
-            {
-                _receivedScale = targetScale.sqrMagnitude;
-                _target.transform.localScale = targetScale;
-            }
             _debugExpectedSizeInBytes += bytes.Length;
         }
 

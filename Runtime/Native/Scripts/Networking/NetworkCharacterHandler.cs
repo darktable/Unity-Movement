@@ -438,6 +438,8 @@ namespace Meta.XR.Movement.Networking
             }
 
             var bodyPose = _networkCharacterRetargeter.GetCurrentBodyPose(Retargeting.JointType.NoWorldSpace);
+            bodyPose[0] = new NativeTransform(bodyPose[0].Orientation, bodyPose[0].Position,
+                _networkCharacterRetargeter.SkeletonRetargeter.RetargetedPose[0].Scale);
             var facePose = _networkCharacterRetargeter.GetCurrentFacePose(true);
 
             var bodyIndicesToSerialize = lastAck == -1
@@ -445,14 +447,31 @@ namespace Meta.XR.Movement.Networking
                 : _networkCharacterRetargeter.BodyIndicesToSend;
             var faceIndicesToSerialize = _networkCharacterRetargeter.FaceIndicesToSync;
 
+            var bodyIndices = new NativeArray<int>(bodyIndicesToSerialize.Length, Allocator.Temp,
+                NativeArrayOptions.UninitializedMemory);
+            var faceIndices = new NativeArray<int>(faceIndicesToSerialize.Length, Allocator.Temp,
+                NativeArrayOptions.UninitializedMemory);
+            bodyIndices.CopyFrom(bodyIndicesToSerialize);
+            faceIndices.CopyFrom(faceIndicesToSerialize);
+
+            var snapshotData = new SnapshotData
+            {
+                BaselineAck = lastAck,
+                Timestamp = networkTime,
+                TargetSkeletonPose = bodyPose,
+                TargetSkeletonIndices = bodyIndices,
+                FacePose = facePose,
+                FaceIndices = faceIndices,
+                RecordingCoordinateSpaceSource = new CoordinateSpace(
+                    up: new Vector3(0.0f, 1.0f, 0.0f),
+                    forward: new Vector3(0.0f, 0.0f, 1.0f),
+                    right: new Vector3(1.0f, 0.0f, 0.0f),
+                    metersToUnitScale: 1.0f)
+            };
+
             _dataIsValid = SerializeSkeletonAndFace(
                 _networkCharacterRetargeter.RetargetingHandle,
-                networkTime,
-                bodyPose,
-                facePose,
-                lastAck,
-                bodyIndicesToSerialize,
-                faceIndicesToSerialize,
+                snapshotData,
                 ref _serializedData);
 
             if (bodyPose.IsCreated)
@@ -470,25 +489,27 @@ namespace Meta.XR.Movement.Networking
         {
             var data = _streamedData.Dequeue();
 
+            var deserializedSnapshotData = new DeserializedSnapshotData
+            {
+                DataVersion = SERIALIZATION_VERSION_CURRENT,
+                TargetSkeletonPose = _bodyPose,
+                FacePose = _facePose
+            };
+
             if (!DeserializeSkeletonAndFace(
                     _networkCharacterRetargeter.RetargetingHandle,
                     data,
-                    SERIALIZATION_VERSION_CURRENT,
-                    out var timestamp,
-                    out var receivedCompressionType,
-                    out var ack,
-                    ref _bodyPose,
-                    ref _facePose))
+                    ref deserializedSnapshotData))
             {
                 _dataIsValid = false;
                 data.Dispose();
                 return;
             }
-
+            _networkCharacterRetargeter.transform.localScale = deserializedSnapshotData.TargetSkeletonPose[0].Scale;
             data.Dispose();
             _networkCharacterRetargeter.DeNormalizeFaceValues(ref _facePose);
             _dataIsValid = true;
-            SendAck(ack);
+            SendAck(deserializedSnapshotData.Ack);
         }
 
         private bool ReadBodyData(float renderTime)

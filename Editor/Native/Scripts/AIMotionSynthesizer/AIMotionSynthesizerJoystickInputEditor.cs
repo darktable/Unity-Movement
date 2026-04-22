@@ -9,6 +9,7 @@ namespace Meta.XR.Movement.AI.Editor
     public class AIMotionSynthesizerJoystickInputEditor : UnityEditor.Editor
     {
         private SerializedProperty _inputModeProperty, _referenceTransformProperty;
+        private SerializedProperty _movementDirectionModeProperty, _facingDirectionModeProperty, _lockDirectionOnInputStartProperty;
 #if USE_UNITY_INPUT_SYSTEM
         private SerializedProperty _moveActionProperty, _lookActionProperty, _sprintActionProperty;
 #endif
@@ -23,6 +24,9 @@ namespace Meta.XR.Movement.AI.Editor
         {
             _inputModeProperty = serializedObject.FindProperty("_inputMode");
             _referenceTransformProperty = serializedObject.FindProperty("_referenceTransform");
+            _movementDirectionModeProperty = serializedObject.FindProperty("_movementDirectionMode");
+            _facingDirectionModeProperty = serializedObject.FindProperty("_facingDirectionMode");
+            _lockDirectionOnInputStartProperty = serializedObject.FindProperty("_lockDirectionOnInputStart");
 #if USE_UNITY_INPUT_SYSTEM
             _moveActionProperty = serializedObject.FindProperty("_moveAction");
             _lookActionProperty = serializedObject.FindProperty("_lookAction");
@@ -53,6 +57,9 @@ namespace Meta.XR.Movement.AI.Editor
             {
                 EditorGUILayout.PropertyField(_inputModeProperty);
                 EditorGUILayout.PropertyField(_joystickThresholdProperty, new GUIContent("Dead Zone"));
+                EditorGUILayout.PropertyField(_movementDirectionModeProperty, new GUIContent("Movement Mode"));
+                EditorGUILayout.PropertyField(_facingDirectionModeProperty, new GUIContent("Direction Mode"));
+                EditorGUILayout.PropertyField(_lockDirectionOnInputStartProperty, new GUIContent("Lock Direction"));
             });
 
             EditorGUILayout.Space(4);
@@ -60,7 +67,16 @@ namespace Meta.XR.Movement.AI.Editor
             AIMotionSynthesizerEditorUtils.DrawSection("Input Reference", _headerColor, () =>
             {
                 EditorGUILayout.PropertyField(_referenceTransformProperty, new GUIContent("Reference Transform"));
-                EditorGUILayout.HelpBox("Transform used for input calculations. Determines the coordinate space for velocity and direction. Defaults to camera rig if not set.", MessageType.Info);
+
+                var mode = (MovementDirectionMode)_movementDirectionModeProperty.enumValueIndex;
+                if (mode == MovementDirectionMode.Relative)
+                {
+                    EditorGUILayout.HelpBox("Relative: movement follows reference transform direction.", MessageType.Info);
+                }
+                else
+                {
+                    EditorGUILayout.HelpBox("Absolute: joystick maps to world axes (Up=+Z, Right=+X).", MessageType.Info);
+                }
             });
 
             EditorGUILayout.Space(4);
