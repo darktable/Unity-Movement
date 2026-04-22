@@ -5,7 +5,7 @@ Unity-Movement is a package that uses OpenXR’s tracking layer APIs to expose B
 The Unity-Movement package is released under the [Oculus License](https://github.com/oculus-samples/Unity-Movement/blob/main/LICENSE.md). The MIT License applies to only certain, clearly marked documents. If an individual file does not indicate which license it is subject to, then the Oculus License applies.
 
 ### Requirements
-- Unity 2022.3.15f1 or newer.
+- Unity 6000.0.66f2 or newer.
 - v81.0 or newer of the Meta XR SDK. You will need the [Meta XR Core SDK](https://assetstore.unity.com/packages/tools/integration/meta-xr-core-sdk-269169) and the [Meta XR Interaction SDK](https://assetstore.unity.com/packages/tools/integration/meta-xr-interaction-sdk-265014) packages found [on this page](https://assetstore.unity.com/publishers/25353).
 - A project set up with these [steps](https://developer.oculus.com/documentation/unity/move-overview/#unity-project-setup).
 

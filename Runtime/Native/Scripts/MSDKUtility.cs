@@ -158,7 +158,7 @@ namespace Meta.XR.Movement
         /// </summary>
         public const int SERIALIZATION_END_HEADER_SIZE_BYTES = 8;
 
-        public const double SERIALIZATION_VERSION_CURRENT = 0.03;
+        public const double SERIALIZATION_VERSION_CURRENT = 0.04;
 
         /// <summary>
         /// Static DLL name.
@@ -759,6 +759,11 @@ namespace Meta.XR.Movement
             public SkeletonType Type;
 
             /// <summary>
+            /// Flags set on the skeleton.
+            /// </summary>
+            public SkeletonFlags Flags;
+
+            /// <summary>
             /// The number of joints.
             /// </summary>
             public int JointCount;
@@ -774,9 +779,10 @@ namespace Meta.XR.Movement
             /// <param name="type"><see cref="Type"/></param>
             /// <param name="jointCount"><see cref="JointCount"/></param>
             /// <param name="blendShapeCount"><see cref="BlendShapeCount"/></param>
-            public SkeletonInfo(SkeletonType type, int jointCount, int blendShapeCount)
+            public SkeletonInfo(SkeletonType type, SkeletonFlags flags, int jointCount, int blendShapeCount)
             {
                 Type = type;
+                Flags = flags;
                 JointCount = jointCount;
                 BlendShapeCount = blendShapeCount;
             }
@@ -788,6 +794,7 @@ namespace Meta.XR.Movement
             public override string ToString()
             {
                 return $"SkeletonType({Type}) " +
+                       $"Flags({Flags}) " +
                        $"JointCount({JointCount}) " +
                        $"BlendShapeCount({BlendShapeCount})";
             }
@@ -1332,6 +1339,28 @@ namespace Meta.XR.Movement
         }
 
         /// <summary>
+        /// Flags that specify information or behavior about a skeleton
+        /// </summary>
+        [Flags]
+        public enum SkeletonFlags : uint
+        {
+            /// <summary>
+            /// No flags applied to this skeleton.
+            /// </summary>
+            None = 0,
+
+            /// <summary>
+            /// When set, the coordinate conversion process will not apply
+            /// any rotation correction to the joint orientations.
+            /// The Movement SDK Skeleton requires this flag to be set for
+            /// X-Engine compatibility.
+            /// NOTE: The rotation is applied (and required) for most model
+            /// formats (FBX, GLTF, OBJ, etc.)
+            /// </summary>
+            NoRotationCorrectionOnCoordConversion = 1 << 0,
+        }
+
+        /// <summary>
         /// Contains Initialization Parameters for a Skeleton
         /// </summary>
         public struct SkeletonInitParams
@@ -1342,6 +1371,11 @@ namespace Meta.XR.Movement
             public NativeArray<NativeTransform> MinTPose;
             public NativeArray<NativeTransform> MaxTPose;
             public NativeArray<NativeTransform> UnscaledTPose;
+
+            // NOTE: All 3 poses need to be in the same joint space type
+            // Root Relative by default.
+            public JointRelativeSpaceType JointSpaceType;
+
             public string[] OptionalKnownSourceJointNamesById;
             public AutoMappingJointData[] OptionalAutoMapJointData;
 
@@ -1354,6 +1388,9 @@ namespace Meta.XR.Movement
             // Buffer of all Manifestation joint names in order of manifestations
             public string[] OptionalManifestationJointNames;
 
+            // Skeleton Flags
+            public SkeletonFlags SkeletonFlags;
+
             public override string ToString()
             {
                 var sb = new System.Text.StringBuilder();
@@ -1365,9 +1402,11 @@ namespace Meta.XR.Movement
                 sb.AppendLine($"  MinTPose: {MinTPose.Length}");
                 sb.AppendLine($"  MaxTPose: {MaxTPose.Length}");
                 sb.AppendLine($"  UnscaledTPose: {UnscaledTPose.Length}");
+                sb.AppendLine($"  JointSpaceType: {JointSpaceType}");
                 sb.AppendLine($"  OptionalKnownSourceJointNamesById: {OptionalKnownSourceJointNamesById?.Length ?? 0}");
                 sb.AppendLine($"  OptionalAutoMapJointData: {OptionalAutoMapJointData?.Length ?? 0}");
                 sb.AppendLine($"  Manifestations: {OptionalManifestationNames?.Length ?? 0}");
+                sb.AppendLine($"  SkeletonFlags: {SkeletonFlags}");
 
                 // Add joint names
                 if (JointNames is { Length: > 0 })
@@ -1420,6 +1459,10 @@ namespace Meta.XR.Movement
             public unsafe NativeTransform* MaxTPose;
             public unsafe NativeTransform* UnscaledTPose;
 
+            // NOTE: All 3 poses need to be in the same joint space type
+            // Root Relative by default.
+            public JointRelativeSpaceType JointSpaceType;
+
             public IntPtr optional_KnownSourceJointNamesById;
 
             public int optional_autoMapJointDataCount;
@@ -1437,6 +1480,9 @@ namespace Meta.XR.Movement
             // Buffer of all Manifestation joint names in order of manifestations
             public IntPtr optional_ManifestationJointNames;
 
+            // Skeleton Flags
+            public SkeletonFlags SkeletonFlags;
+
             public unsafe SkeletonInitParamsUnmanaged(SkeletonInitParams safeParams)
             {
                 BlendShapeCount = safeParams.BlendShapeNames?.Length ?? 0;
@@ -1449,6 +1495,9 @@ namespace Meta.XR.Movement
                 MinTPose = safeParams.MinTPose.IsCreated ? safeParams.MinTPose.GetPtr() : null;
                 MaxTPose = safeParams.MaxTPose.IsCreated ? safeParams.MaxTPose.GetPtr() : null;
                 UnscaledTPose = safeParams.UnscaledTPose.IsCreated ? safeParams.UnscaledTPose.GetPtr() : null;
+
+                JointSpaceType = safeParams.JointSpaceType;
+
                 optional_KnownSourceJointNamesById =
                     UnmanagedMarshalFunctions.MarshalStringArrayToUnmanagedPtr(safeParams
                         .OptionalKnownSourceJointNamesById);
@@ -1489,6 +1538,8 @@ namespace Meta.XR.Movement
                 optional_ManifestationJointNames =
                     UnmanagedMarshalFunctions.MarshalStringArrayToUnmanagedPtr(safeParams
                         .OptionalManifestationJointNames);
+
+                SkeletonFlags = safeParams.SkeletonFlags;
             }
 
             public unsafe void Dispose()
@@ -1660,6 +1711,68 @@ namespace Meta.XR.Movement
         }
 
         /// <summary>
+        /// Managed struct containing data for deserialization operations.
+        /// This struct is used to pass input arrays and receive output values from the deserialization function.
+        /// </summary>
+        public struct DeserializedSnapshotData
+        {
+            /// <summary>
+            /// Input: The version of the serialized data format.
+            /// </summary>
+            public double DataVersion;
+
+            /// <summary>
+            /// Target skeleton pose native array (output for retargeted body pose).
+            /// </summary>
+            public NativeArray<NativeTransform> TargetSkeletonPose;
+
+            /// <summary>
+            /// Face pose native array (output for face blendshape weights).
+            /// </summary>
+            public NativeArray<float> FacePose;
+
+            /// <summary>
+            /// Source skeleton pose native array (output for body tracking pose).
+            /// </summary>
+            public NativeArray<NativeTransform> SourceSkeletonPose;
+
+            /// <summary>
+            /// Bind pose native array.
+            /// </summary>
+            public NativeArray<NativeTransform> BindPose;
+
+            /// <summary>
+            /// Output: Timestamp of the deserialized snapshot.
+            /// </summary>
+            public double Timestamp;
+
+            /// <summary>
+            /// Output: Compression type used in the snapshot.
+            /// </summary>
+            public SerializationCompressionType CompressionType;
+
+            /// <summary>
+            /// Output: Acknowledgement number from the snapshot.
+            /// </summary>
+            public int Ack;
+
+            /// <summary>
+            /// Output: Frame data containing metadata about the frame.
+            /// </summary>
+            public FrameData FrameData;
+
+            /// <summary>
+            /// Output: Number of bind pose joints deserialized.
+            /// </summary>
+            public int NumBindPoseJoints;
+
+            /// <summary>
+            /// Output: Coordinate space of the recording source.
+            /// </summary>
+            public CoordinateSpace CoordinateSpaceSource;
+        }
+
+        /// <summary>
         /// Unmanaged snapshot data.
         /// </summary>
         [StructLayout(LayoutKind.Sequential), Serializable]
@@ -1783,6 +1896,26 @@ namespace Meta.XR.Movement
             public unsafe NativeTransform* BindPose;
             public int NumBindPoseJoints;
             public CoordinateSpace CoordinateSpaceSource;
+
+            /// <summary>
+            /// Constructor that initializes the unmanaged struct from the managed DeserializedSnapshotData.
+            /// </summary>
+            /// <param name="snapshotData">The managed snapshot data containing output arrays.</param>
+            public unsafe DeserializedSnapshotDataUnmanaged(DeserializedSnapshotData snapshotData)
+            {
+                Timestamp = 0;
+                Compression = SerializationCompressionType.High;
+                Ack = 0;
+
+                TargetSkeletonPose = snapshotData.TargetSkeletonPose.IsCreated ? snapshotData.TargetSkeletonPose.GetPtr() : null;
+                FacePose = snapshotData.FacePose.IsCreated ? snapshotData.FacePose.GetPtr() : null;
+                SourceSkeletonPose = snapshotData.SourceSkeletonPose.IsCreated ? snapshotData.SourceSkeletonPose.GetPtr() : null;
+                BindPose = snapshotData.BindPose.IsCreated ? snapshotData.BindPose.GetPtr() : null;
+
+                FrameData = new FrameData();
+                NumBindPoseJoints = 0;
+                CoordinateSpaceSource = new CoordinateSpace();
+            }
         }
 
         /// <summary>
@@ -2263,6 +2396,9 @@ namespace Meta.XR.Movement
             public static extern Result metaMovementSDK_destroy(ulong handle);
 
             [DllImport(DLL, CallingConvention = CallingConvention.Cdecl)]
+            public static extern Result metaMovementSDK_destroyAllHandles();
+
+            [DllImport(DLL, CallingConvention = CallingConvention.Cdecl)]
             public static extern Result metaMovementSDK_createOrUpdateSimpleUtilityConfig(
                 string configName,
                 SkeletonType skeletonType,
@@ -2273,6 +2409,14 @@ namespace Meta.XR.Movement
             public static extern Result metaMovementSDK_createOrUpdateUtilityConfig(
                 string configName,
                 ref ConfigInitParamsUnmanaged initParamsUnmanaged,
+                out ulong handle);
+
+            // NOTE: sourceHandle and in_out_handle can be the same. The result will
+            // be that the reversed mapping replaces the source mapping.
+            [DllImport(DLL, CallingConvention = CallingConvention.Cdecl)]
+            public static extern Result metaMovementSDK_createReverseMappingUtilityConfig(
+                string configName,
+                ulong sourceHandle,
                 out ulong handle);
 
             /**********************************************************
@@ -2714,6 +2858,7 @@ namespace Meta.XR.Movement
             public static extern unsafe Result metaMovementSDK_applyWorldSpaceCoordinateSpaceConversion(
                 CoordinateSpace inCoordinateSpace,
                 CoordinateSpace outCoordinateSpace,
+                bool applyFBXandGLBModelFileJointRotationFixup,
                 NativeTransform* transformData,
                 int jointCount);
 
@@ -2927,6 +3072,29 @@ namespace Meta.XR.Movement
         }
 
         /// <summary>
+        /// Creates a reverse mapping of the config specified at sourceHandle and returns the new handle for the reversed config
+        /// This creates a retargeting config used to convert animation data back from the target skeleton to the source skeleton.
+        /// </summary>
+        /// <param name="configName">The name of the reversed config.</param>
+        /// <param name="sourceHandle">Source handle for the config to reverse.</param>
+        /// <param name="handle">The handle that can be used for accessing the resulting config. (Can be the same as sourceHandle)</param>
+        /// <returns>True if the function was successfully executed.</returns>
+        public static bool CreateReverseMappingUtilityConfig(string configName, ulong sourceHandle, out ulong handle)
+        {
+            Result success;
+            using (new ProfilerScope(nameof(CreateReverseMappingUtilityConfig)))
+            {
+
+                success = Api.metaMovementSDK_createReverseMappingUtilityConfig(
+                    configName,
+                    sourceHandle,
+                    out handle);
+
+            }
+            return success == Result.Success;
+        }
+
+        /// <summary>
         /// Creates or updates a handle using a config string.
         /// This method allows for creating a configuration from a JSON string rather than
         /// specifying all parameters individually.
@@ -2963,6 +3131,23 @@ namespace Meta.XR.Movement
             using (new ProfilerScope(nameof(DestroyHandle)))
             {
                 success = Api.metaMovementSDK_destroy(handle);
+            }
+
+            return success == Result.Success;
+        }
+
+        /// <summary>
+        /// Destroy all handles that are currently loaded.
+        /// This releases all resources associated with the loaded handles
+        /// Useful for Tooling and cleanup when switching level.
+        /// </summary>
+        /// <returns>True if the function was successfully executed.</returns>
+        public static bool DestroyAllHandles()
+        {
+            Result success;
+            using (new ProfilerScope(nameof(DestroyAllHandles)))
+            {
+                success = Api.metaMovementSDK_destroyAllHandles();
             }
 
             return success == Result.Success;
@@ -4443,50 +4628,16 @@ namespace Meta.XR.Movement
         /// The serialization applies compression based on the current serialization settings.
         /// </summary>
         /// <param name="handle">The handle to use for serialization.</param>
-        /// <param name="timestamp">The timestamp to associate with this snapshot, in seconds.</param>
-        /// <param name="bodyPose">The body pose transforms to be serialized.</param>
-        /// <param name="facePose">The face pose blendshape weights to be serialized normalized.</param>
-        /// <param name="ack">The acknowledgement number for the data, used for synchronization.</param>
-        /// <param name="bodyIndicesToSerialize">The indices of the joints in the body pose that should be serialized.</param>
-        /// <param name="faceIndicesToSerialize">The indices of the blendshapes in the face pose that should be serialized.</param>
+        /// <param name="snapshotData">The snapshot data containing body pose, face pose, and other serialization parameters.</param>
         /// <param name="output">Reference to a byte array that will be created and filled with the serialized data.</param>
         /// <returns>True if serialization was successful.</returns>
         public static bool SerializeSkeletonAndFace(
             ulong handle,
-            float timestamp,
-            NativeArray<NativeTransform> bodyPose,
-            NativeArray<float> facePose,
-            int ack,
-            int[] bodyIndicesToSerialize,
-            int[] faceIndicesToSerialize,
+            SnapshotData snapshotData,
             ref NativeArray<byte> output)
         {
             using (new ProfilerScope(nameof(SerializeSkeletonAndFace)))
             {
-                var bodyIndices = new NativeArray<int>(bodyIndicesToSerialize.Length, Allocator.Temp,
-                    NativeArrayOptions.UninitializedMemory);
-                var faceIndices = new NativeArray<int>(faceIndicesToSerialize.Length, Allocator.Temp,
-                    NativeArrayOptions.UninitializedMemory);
-                bodyIndices.CopyFrom(bodyIndicesToSerialize);
-                faceIndices.CopyFrom(faceIndicesToSerialize);
-
-                SnapshotData snapshotData = new SnapshotData();
-                snapshotData.BaselineAck = ack;
-                snapshotData.Timestamp = timestamp;
-
-                snapshotData.TargetSkeletonPose = bodyPose;
-                snapshotData.TargetSkeletonIndices = bodyIndices;
-
-                snapshotData.FacePose = facePose;
-                snapshotData.FaceIndices = faceIndices;
-
-                // Unity coordinate system: Y-up, Z-forward (positive), X-right
-                snapshotData.RecordingCoordinateSpaceSource = new CoordinateSpace(
-                    up: new Vector3(0.0f, 1.0f, 0.0f),
-                    forward: new Vector3(0.0f, 0.0f, 1.0f),
-                    right: new Vector3(1.0f, 0.0f, 0.0f),
-                    metersToUnitScale: 1.0f);
-
                 if (!BuildSnapshot(handle, snapshotData))
                 {
                     Debug.LogError("Could not build snapshot before serialization!");
@@ -4551,29 +4702,16 @@ namespace Meta.XR.Movement
         /// Useful when you don't need to serialize facial expressions.
         /// </summary>
         /// <param name="handle">The handle associated with the serialization.</param>
-        /// <param name="timestamp">The timestamp to associate with this snapshot, in seconds.</param>
-        /// <param name="ack">The acknowledgment index of the data, used for synchronization.</param>
-        /// <param name="bodyTrackingPose">The body pose transforms to serialize.</param>
-        /// <param name="bodyTrackingIndices">The indices of the joints in the body pose that should be serialized.</param>
+        /// <param name="snapshotData">The snapshot data containing body pose and other serialization parameters.</param>
         /// <param name="output">Reference to a byte array that will be created and filled with the serialized data.</param>
         /// <returns>True if serialization was successful.</returns>
         public static bool SerializeBodySkeleton(
             ulong handle,
-            float timestamp,
-            int ack,
-            NativeArray<NativeTransform> bodyTrackingPose,
-            NativeArray<int> bodyTrackingIndices,
+            SnapshotData snapshotData,
             ref NativeArray<byte> output)
         {
             using (new ProfilerScope(nameof(SerializeBodySkeleton)))
             {
-                SnapshotData snapshotData = new SnapshotData();
-                snapshotData.BaselineAck = ack;
-                snapshotData.Timestamp = timestamp;
-
-                snapshotData.SourceSkeletonPose = bodyTrackingPose;
-                snapshotData.SourceSkeletonIndices = bodyTrackingIndices;
-
                 if (!BuildSnapshot(handle, snapshotData))
                 {
                     Debug.LogError("Could not build snapshot before serialization!");
@@ -4609,95 +4747,29 @@ namespace Meta.XR.Movement
         /// </summary>
         /// <param name="handle">The handle to use for deserialization.</param>
         /// <param name="data">The serialized data to be deserialized.</param>
-        /// <param name="timestamp">Output parameter that receives the timestamp of the snapshot.</param>
-        /// <param name="compressionType">Output parameter that receives the compression type used in the snapshot.</param>
-        /// <param name="ack">Output parameter that receives the acknowledgement number from the snapshot.</param>
-        /// <param name="outputBodyPose">Reference to an array that will be filled with the deserialized body pose transforms.</param>
-        /// <param name="outputFacePose">Reference to an array that will be filled with the deserialized face pose blendshape weights.</param>
+        /// <param name="deserializedSnapshotData">The struct containing input parameters (including DataVersion) and receiving output values.</param>
         /// <returns>True if deserialization was successful.</returns>
         public static bool DeserializeSkeletonAndFace(
             ulong handle,
             NativeArray<byte> data,
-            double dataVersion,
-            out double timestamp,
-            out SerializationCompressionType compressionType,
-            out int ack,
-            ref NativeArray<NativeTransform> outputBodyPose,
-            ref NativeArray<float> outputFacePose)
+            ref DeserializedSnapshotData deserializedSnapshotData)
         {
             Result success;
             using (new ProfilerScope(nameof(DeserializeSkeletonAndFace)))
             {
                 unsafe
                 {
-                    DeserializedSnapshotDataUnmanaged snapshotDataUnmanaged = new DeserializedSnapshotDataUnmanaged();
-                    snapshotDataUnmanaged.SourceSkeletonPose = null;
-                    snapshotDataUnmanaged.TargetSkeletonPose = outputBodyPose.GetPtr();
-                    snapshotDataUnmanaged.FacePose = outputFacePose.GetPtr();
-                    snapshotDataUnmanaged.BindPose = null;
+                    var snapshotDataUnmanaged = new DeserializedSnapshotDataUnmanaged(deserializedSnapshotData);
 
-                    success = Api.metaMovementSDK_deserializeSnapshotData(handle, data.GetPtr(), dataVersion,
+                    success = Api.metaMovementSDK_deserializeSnapshotData(handle, data.GetPtr(), deserializedSnapshotData.DataVersion,
                         ref snapshotDataUnmanaged);
-                    timestamp = snapshotDataUnmanaged.Timestamp;
-                    compressionType = snapshotDataUnmanaged.Compression;
-                    ack = snapshotDataUnmanaged.Ack;
-                }
-            }
 
-            return success == Result.Success;
-        }
-
-        /// <summary>
-        /// Deserializes data into body and face pose data with additional tracking information.
-        /// This extended version also extracts body tracking pose and frame metadata from the snapshot.
-        /// </summary>
-        /// <param name="handle">The handle to use for deserialization.</param>
-        /// <param name="data">The serialized data to be deserialized.</param>
-        /// <param name="timestamp">Output parameter that receives the timestamp of the snapshot.</param>
-        /// <param name="compressionType">Output parameter that receives the compression type used in the snapshot.</param>
-        /// <param name="ack">Output parameter that receives the acknowledgement number from the snapshot.</param>
-        /// <param name="outputBodyPose">Reference to an array that will be filled with the deserialized body pose transforms.</param>
-        /// <param name="outputFacePose">Reference to an array that will be filled with the deserialized face pose blendshape weights.</param>
-        /// <param name="outputBodyTrackingPose">Reference to an array that will be filled with the deserialized body tracking pose transforms.</param>
-        /// <param name="frameData">Reference to a FrameData structure that will be filled with metadata about the frame.</param>
-        /// <param name="outBindPose">Output bind pose.</param>
-        /// <param name="outBindPoseCount">Output bind pose count.</param>
-        /// <param name="coordinateSpaceSource">Coordinate space (source).</param>
-        /// <returns>True if deserialization was successful.</returns>
-        public static bool DeserializeSkeletonAndFace(
-            ulong handle,
-            NativeArray<byte> data,
-            double dataVersion,
-            out double timestamp,
-            out SerializationCompressionType compressionType,
-            out int ack,
-            ref NativeArray<NativeTransform> outputBodyPose,
-            ref NativeArray<float> outputFacePose,
-            ref NativeArray<NativeTransform> outputBodyTrackingPose,
-            ref FrameData frameData,
-            ref NativeArray<NativeTransform> outBindPose,
-            out int outBindPoseCount,
-            out CoordinateSpace coordinateSpaceSource)
-        {
-            Result success;
-            using (new ProfilerScope(nameof(DeserializeSkeletonAndFace)))
-            {
-                unsafe
-                {
-                    DeserializedSnapshotDataUnmanaged snapshotDataUnmanaged = new DeserializedSnapshotDataUnmanaged();
-                    snapshotDataUnmanaged.TargetSkeletonPose = outputBodyPose.GetPtr();
-                    snapshotDataUnmanaged.FacePose = outputFacePose.GetPtr();
-                    snapshotDataUnmanaged.SourceSkeletonPose = outputBodyTrackingPose.GetPtr();
-                    snapshotDataUnmanaged.BindPose = outBindPose.GetPtr();
-
-                    success = Api.metaMovementSDK_deserializeSnapshotData(handle, data.GetPtr(), dataVersion,
-                        ref snapshotDataUnmanaged);
-                    timestamp = snapshotDataUnmanaged.Timestamp;
-                    compressionType = snapshotDataUnmanaged.Compression;
-                    ack = snapshotDataUnmanaged.Ack;
-                    frameData = snapshotDataUnmanaged.FrameData;
-                    outBindPoseCount = snapshotDataUnmanaged.NumBindPoseJoints;
-                    coordinateSpaceSource = snapshotDataUnmanaged.CoordinateSpaceSource;
+                    deserializedSnapshotData.Timestamp = snapshotDataUnmanaged.Timestamp;
+                    deserializedSnapshotData.CompressionType = snapshotDataUnmanaged.Compression;
+                    deserializedSnapshotData.Ack = snapshotDataUnmanaged.Ack;
+                    deserializedSnapshotData.FrameData = snapshotDataUnmanaged.FrameData;
+                    deserializedSnapshotData.NumBindPoseJoints = snapshotDataUnmanaged.NumBindPoseJoints;
+                    deserializedSnapshotData.CoordinateSpaceSource = snapshotDataUnmanaged.CoordinateSpaceSource;
                 }
             }
 
@@ -4877,7 +4949,8 @@ namespace Meta.XR.Movement
         public static bool ApplyWorldSpaceCoordinateSpaceConversionByRef(
             CoordinateSpace inCoordinateSpace,
             CoordinateSpace outCoordinateSpace,
-            ref NativeArray<NativeTransform> transformData)
+            ref NativeArray<NativeTransform> transformData,
+            bool applyFBXandGLBModelFileJointRotationFixup = true)
         {
             Result success;
             using (new ProfilerScope(nameof(ApplyWorldSpaceCoordinateSpaceConversionByRef)))
@@ -4887,6 +4960,7 @@ namespace Meta.XR.Movement
                     success = Api.metaMovementSDK_applyWorldSpaceCoordinateSpaceConversion(
                         inCoordinateSpace,
                         outCoordinateSpace,
+                        applyFBXandGLBModelFileJointRotationFixup,
                         transformData.GetPtr(),
                         transformData.Length);
                 }
@@ -4908,7 +4982,8 @@ namespace Meta.XR.Movement
         public static bool ApplyWorldSpaceCoordinateSpaceConversion(
             CoordinateSpace inCoordinateSpace,
             CoordinateSpace outCoordinateSpace,
-            ref NativeTransform transformData)
+            ref NativeTransform transformData,
+            bool applyFBXandGLBModelFileJointRotationFixup = true)
         {
             Result success;
             using (new ProfilerScope(nameof(ApplyWorldSpaceCoordinateSpaceConversion)))
@@ -4921,6 +4996,7 @@ namespace Meta.XR.Movement
                     success = Api.metaMovementSDK_applyWorldSpaceCoordinateSpaceConversion(
                         inCoordinateSpace,
                         outCoordinateSpace,
+                        applyFBXandGLBModelFileJointRotationFixup,
                         tempArray.GetPtr(),
                         tempArray.Length);
                 }

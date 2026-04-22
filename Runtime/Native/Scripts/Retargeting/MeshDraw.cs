@@ -149,7 +149,7 @@ namespace Meta.XR.Movement.Retargeting
                 return;
             }
 
-            var pose = SkeletonUtilities.GetPosesFromTheTracker(
+            using var pose = SkeletonUtilities.GetPosesFromTheTracker(
                 dataProvider,
                 offset,
                 convertToUnitySpace);

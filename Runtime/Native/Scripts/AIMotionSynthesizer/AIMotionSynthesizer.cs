@@ -67,7 +67,8 @@ namespace Meta.XR.Movement.AI
                 return false;
             }
 
-            if (!MSDKAIMotionSynthesizer.Initialize(_aiMotionSynthesizerHandle, _config.ModelAsset.bytes, _config.GuidanceAsset?.bytes))
+            if (!MSDKAIMotionSynthesizer.Initialize(_aiMotionSynthesizerHandle, _config.ModelAsset.bytes,
+                    _config.GuidanceAsset?.bytes))
             {
                 Debug.LogError("[AIMotionSynthesizerIntegration] Failed to initialize AIMotionSynthesizer");
                 MSDKAIMotionSynthesizer.DestroyHandle(_aiMotionSynthesizerHandle);
@@ -75,9 +76,11 @@ namespace Meta.XR.Movement.AI
                 return false;
             }
 
-            if (!MSDKAIMotionSynthesizer.GetSkeletonInfo(_aiMotionSynthesizerHandle, SkeletonType.TargetSkeleton, out var skeletonInfo))
+            if (!MSDKAIMotionSynthesizer.GetSkeletonInfo(_aiMotionSynthesizerHandle, SkeletonType.TargetSkeleton,
+                    out var skeletonInfo))
             {
-                Debug.LogError("[AIMotionSynthesizerIntegration] Failed to get skeleton info from AIMotionSynthesizer handle");
+                Debug.LogError(
+                    "[AIMotionSynthesizerIntegration] Failed to get skeleton info from AIMotionSynthesizer handle");
                 MSDKAIMotionSynthesizer.DestroyHandle(_aiMotionSynthesizerHandle);
                 _aiMotionSynthesizerHandle = MSDKAIMotionSynthesizer.INVALID_HANDLE;
                 return false;
@@ -138,20 +141,32 @@ namespace Meta.XR.Movement.AI
                 return bodyTrackingPose;
             }
 
-            if (!bodyTrackingPose.IsCreated)
-            {
-                return default;
-            }
-
             _bodyPose.CopyFrom(bodyTrackingPose);
+
+            // Root Motion Mode determines how skeleton joints are positioned relative to root:
+            // - None: Use native None mode - root joint zeroed, hips retain position, no root motion extraction.
+            //   The root transform is NOT modified. Skeleton stays at origin without any root motion.
+            // - ApplyRootMotion: Use LocalSpace - skeleton joints relative to extracted root.
+            //   The root pose (XZ translation + yaw) is applied to the transform.
+            // - ApplyFromReference: Use LocalSpace - skeleton joints relative to extracted root.
+            //   The root transform follows the reference transform. Hips are local to character space.
+            var nativeRootMotionMode = _config.RootMotionMode switch
+            {
+                RootMotionMode.None => MSDKAIMotionSynthesizer.RootMotionMode.None,
+                RootMotionMode.ApplyRootMotion => MSDKAIMotionSynthesizer.RootMotionMode.LocalSpace,
+                RootMotionMode.ApplyFromReference => MSDKAIMotionSynthesizer.RootMotionMode.LocalSpace,
+                _ => MSDKAIMotionSynthesizer.RootMotionMode.LocalSpace
+            };
 
             bool success;
             if (_config.EnableSynthesizedStandingPose)
             {
-                success = MSDKAIMotionSynthesizer.GetSynthesizedAIMotionSynthesizerPoseByRef(
+                success = MSDKAIMotionSynthesizer.GetSynthesizedPoseByRef(
                     _aiMotionSynthesizerHandle,
                     bodyTrackingPose,
-                    1f,
+                    _currentBlendFactor,
+                    _config.RootAlignmentDirection,
+                    nativeRootMotionMode,
                     ref _blendedPose,
                     out _aiMotionSynthesizerRootPose);
 
@@ -163,12 +178,14 @@ namespace Meta.XR.Movement.AI
             }
             else
             {
-                success = MSDKAIMotionSynthesizer.GetBlendedAIMotionSynthesizerPoseByRef(
+                success = MSDKAIMotionSynthesizer.GetBlendedPoseByRef(
                     _aiMotionSynthesizerHandle,
                     bodyTrackingPose,
                     _config.UpperBodySource,
                     _config.LowerBodySource,
+                    _config.RootAlignmentDirection,
                     _currentBlendFactor,
+                    nativeRootMotionMode,
                     ref _blendedPose,
                     out _aiMotionSynthesizerRootPose);
 
@@ -184,25 +201,34 @@ namespace Meta.XR.Movement.AI
 
         /// <summary>
         /// Applies root motion to the root transform based on <see cref="AIMotionSynthesizerConfig.RootMotionMode"/>.
+        /// Call this in LateUpdate after GetBlendedPose.
         /// </summary>
+        /// <remarks>
+        /// - <see cref="RootMotionMode.None"/>: Does nothing. Root transform is not modified.
+        ///   Hips are positioned in world space (relative to origin).
+        /// - <see cref="RootMotionMode.ApplyRootMotion"/>: Applies the AI Motion Synthesizer root pose
+        ///   (XZ translation + yaw rotation) to the root transform. Hips are local to character space.
+        /// - <see cref="RootMotionMode.ApplyFromReference"/>: Copies the reference transform's local position
+        ///   and rotation to root. Hips are local to character space.
+        /// </remarks>
         public void ApplyRootMotion()
         {
             switch (_config.RootMotionMode)
             {
                 case RootMotionMode.None:
+                    // Root transform remains untouched - do nothing
                     break;
-
-                case RootMotionMode.ApplyFromReference:
-                    if (_config.ReferenceTransform != null)
-                    {
-                        _rootTransform.position = _config.ReferenceTransform.position;
-                        _rootTransform.rotation = _config.ReferenceTransform.rotation;
-                    }
-                    break;
-
                 case RootMotionMode.ApplyRootMotion:
-                    _rootTransform.position = _aiMotionSynthesizerRootPose.Position;
-                    _rootTransform.rotation = _aiMotionSynthesizerRootPose.Orientation;
+                    // Apply the AI Motion Synthesizer root pose to the transform
+                    _rootTransform.SetLocalPositionAndRotation(
+                        _aiMotionSynthesizerRootPose.Position,
+                        _aiMotionSynthesizerRootPose.Orientation);
+                    break;
+                case RootMotionMode.ApplyFromReference:
+                    // Copy the reference transform's position and rotation to root
+                    _rootTransform.SetLocalPositionAndRotation(
+                        _config.ReferenceTransform.localPosition,
+                        _config.ReferenceTransform.localRotation);
                     break;
             }
         }
@@ -211,7 +237,8 @@ namespace Meta.XR.Movement.AI
         /// Draws debug visualization of the AI motion synthesizer skeleton.
         /// Only draws if <see cref="AIMotionSynthesizerConfig.DebugDrawAIMotionSynthesizer"/> is enabled.
         /// </summary>
-        public void DrawVisualization(NativeArray<NativeTransform> bodyTrackingPose, NativeArray<NativeTransform> blendedPose, Pose rootTransform = default)
+        public void DrawVisualization(NativeArray<NativeTransform> bodyTrackingPose,
+            NativeArray<NativeTransform> blendedPose, Pose rootTransform = default)
         {
             if (!_config.DebugDrawAIMotionSynthesizer)
             {
@@ -229,12 +256,14 @@ namespace Meta.XR.Movement.AI
             }
 
             // Draw AIMotionSynthesizer pose only
-            MSDKAIMotionSynthesizer.GetBlendedAIMotionSynthesizerPose(
+            MSDKAIMotionSynthesizer.GetBlendedPose(
                 _aiMotionSynthesizerHandle,
                 _bodyPose,
                 MSDKAIMotionSynthesizer.PoseSource.AIMotionSynthesizer,
                 MSDKAIMotionSynthesizer.PoseSource.AIMotionSynthesizer,
+                _config.RootAlignmentDirection,
                 1.0f,
+                MSDKAIMotionSynthesizer.RootMotionMode.WorldSpace,
                 out var aiMotionSynthesizerPose,
                 out var rootPose);
             MeshDraw.DrawSkeleton(aiMotionSynthesizerPose, _parentIndices, _config.DebugAIMotionSynthesizerColor);
@@ -300,7 +329,8 @@ namespace Meta.XR.Movement.AI
 
                     if (blendTime > 0f)
                     {
-                        _currentBlendFactor = Mathf.MoveTowards(_currentBlendFactor, targetBlendFactor, deltaTime / blendTime);
+                        _currentBlendFactor =
+                            Mathf.MoveTowards(_currentBlendFactor, targetBlendFactor, deltaTime / blendTime);
                     }
                     else
                     {
@@ -325,7 +355,8 @@ namespace Meta.XR.Movement.AI
                 _runtimeInputProvider = _config.InputProvider as IAIMotionSynthesizerInputProvider;
                 if (_runtimeInputProvider == null)
                 {
-                    Debug.LogError($"[AIMotionSynthesizerIntegration] MonoBehaviour {_config.InputProvider.name} does not implement IAIMotionSynthesizerInputProvider");
+                    Debug.LogError(
+                        $"[AIMotionSynthesizerIntegration] MonoBehaviour {_config.InputProvider.name} does not implement IAIMotionSynthesizerInputProvider");
                 }
             }
             else
@@ -333,10 +364,10 @@ namespace Meta.XR.Movement.AI
                 _runtimeInputProvider = null;
                 if (_config.BlendMode == BlendMode.Input)
                 {
-                    Debug.LogWarning("[AIMotionSynthesizerIntegration] BlendMode is set to Input but no InputProvider is assigned");
+                    Debug.LogWarning(
+                        "[AIMotionSynthesizerIntegration] BlendMode is set to Input but no InputProvider is assigned");
                 }
             }
         }
-
     }
 }

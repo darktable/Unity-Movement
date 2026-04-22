@@ -247,21 +247,22 @@ namespace Meta.XR.Movement.Retargeting
         [SerializeField]
         private Vector2 _scaleRange = new(0.8f, 1.2f);
 
-        private SkeletonDraw _sourceSkeletonDraw = new()
+        private static readonly List<int> _sourceJointsToIgnore = new()
         {
-            IndexesToIgnore = new List<int>
-            {
-                (int)SkeletonData.FullBodyTrackingBoneId.LeftHandWristTwist,
-                (int)SkeletonData.FullBodyTrackingBoneId.RightHandWristTwist,
-                (int)SkeletonData.FullBodyTrackingBoneId.LeftHandPalm,
-                (int)SkeletonData.FullBodyTrackingBoneId.RightHandPalm
-            }
+            (int)SkeletonData.FullBodyTrackingBoneId.LeftHandWristTwist,
+            (int)SkeletonData.FullBodyTrackingBoneId.RightHandWristTwist,
+            (int)SkeletonData.FullBodyTrackingBoneId.LeftHandPalm,
+            (int)SkeletonData.FullBodyTrackingBoneId.RightHandPalm
         };
 
+        private SkeletonDraw _sourceSkeletonDraw = new() { IndexesToIgnore = _sourceJointsToIgnore };
         private SkeletonDraw _targetSkeletonDraw = new();
+        private SkeletonDraw _sourceTPoseSkeletonDraw = new() { IndexesToIgnore = _sourceJointsToIgnore };
+        private SkeletonDraw _targetTPoseSkeletonDraw = new();
         private ulong _nativeHandle = INVALID_HANDLE;
         private NativeArray<NativeTransform> _targetReferencePose;
         private NativeArray<int> _targetFingerIndices;
+        private NativeArray<byte> _mappedJointMask;
         private JobHandle _applyPoseJobHandle;
 
         /// <summary>
@@ -310,6 +311,19 @@ namespace Meta.XR.Movement.Retargeting
             SourceParentIndices = new NativeArray<int>(SourceSkeletonData.ParentIndices, Persistent);
             TargetParentIndices = new NativeArray<int>(TargetSkeletonData.ParentIndices, Persistent);
 
+            // Build mapped joint mask so ApplyPose skips unmapped target joints
+            // (e.g. eye bones that have no source in body tracking).
+            // Only allocate when mapping data is available; a default (empty) mask
+            // means "apply all joints" (backward compatible).
+            if (GetSkeletonMappingTargetJoints(_nativeHandle, out var mappedTargetJoints))
+            {
+                _mappedJointMask = new NativeArray<byte>(TargetSkeletonData.JointCount, Persistent);
+                foreach (int joint in mappedTargetJoints)
+                {
+                    _mappedJointMask[joint] = 1;
+                }
+            }
+
             // Setup T-Pose from native API.
             GetSkeletonTPoseByRef(_nativeHandle, SkeletonType.TargetSkeleton, SkeletonTPoseType.UnscaledTPose,
                 JointRelativeSpaceType.LocalSpace, ref TargetReferencePoseLocal);
@@ -334,11 +348,14 @@ namespace Meta.XR.Movement.Retargeting
             IsInitialized = false;
             _sourceSkeletonDraw = null;
             _targetSkeletonDraw = null;
+            _sourceTPoseSkeletonDraw = null;
+            _targetTPoseSkeletonDraw = null;
             _targetReferencePose.Dispose();
             SourcePose.Dispose();
             SourceReferencePose.Dispose();
             RetargetedPose.Dispose();
             RetargetedPoseLocal.Dispose();
+            TargetReferencePoseLocal.Dispose();
 
             // Dispose NativeArrays created from SkeletonData
             _targetFingerIndices.Dispose();
@@ -346,6 +363,10 @@ namespace Meta.XR.Movement.Retargeting
             SourceMaxTPose.Dispose();
             SourceParentIndices.Dispose();
             TargetParentIndices.Dispose();
+            if (_mappedJointMask.IsCreated)
+            {
+                _mappedJointMask.Dispose();
+            }
 
             // Destroy native handle.
             if (!DestroyHandle(_nativeHandle))
@@ -439,6 +460,7 @@ namespace Meta.XR.Movement.Retargeting
                 RotationOnlyIndices = _targetFingerIndices,
                 RootJointIndex = RootJointIndex,
                 HipsJointIndex = HipsJointIndex,
+                MappedJointMask = _mappedJointMask,
                 CurrentRotationIndex =
                     _retargetingBehavior == RetargetingBehavior.RotationsAndPositionsHandsRotationOnly ? 0 : -1
             };
@@ -486,29 +508,49 @@ namespace Meta.XR.Movement.Retargeting
         /// </summary>
         public void DrawDebugSourcePose(Transform offset, Color color)
         {
-            _sourceSkeletonDraw ??= new SkeletonDraw
+            DrawDebugSourceSkeleton(ref _sourceSkeletonDraw, SourcePose, offset, color);
+        }
+
+        /// <summary>
+        /// Debug draw the source T-pose (reference pose).
+        /// </summary>
+        public void DrawDebugSourceTPose(Transform offset, Color color)
+        {
+            if (!SourceReferencePose.IsCreated || SourceReferencePose.Length == 0)
             {
-                IndexesToIgnore = new List<int>
-                {
-                    (int)SkeletonData.FullBodyTrackingBoneId.LeftHandWristTwist,
-                    (int)SkeletonData.FullBodyTrackingBoneId.RightHandWristTwist,
-                    (int)SkeletonData.FullBodyTrackingBoneId.LeftHandPalm,
-                    (int)SkeletonData.FullBodyTrackingBoneId.RightHandPalm
-                }
-            };
-            if (_sourceSkeletonDraw.LineThickness <= float.Epsilon || _sourceSkeletonDraw.TintColor != color)
+                return;
+            }
+
+            if (SourceReferencePose.Length == 1)
             {
-                _sourceSkeletonDraw.InitDraw(color);
+                var pos = offset.position + offset.rotation * SourceReferencePose[0].Position;
+                MeshDraw.DrawSphere(color, 0.04f, pos);
+                return;
+            }
+
+            DrawDebugSourceSkeleton(ref _sourceTPoseSkeletonDraw, SourceReferencePose, offset, color);
+        }
+
+        private void DrawDebugSourceSkeleton(
+            ref SkeletonDraw skeletonDraw,
+            NativeArray<NativeTransform> pose,
+            Transform offset,
+            Color color)
+        {
+            skeletonDraw ??= new SkeletonDraw { IndexesToIgnore = _sourceJointsToIgnore };
+            if (skeletonDraw.LineThickness <= float.Epsilon || skeletonDraw.TintColor != color)
+            {
+                skeletonDraw.InitDraw(color);
             }
 
             var scale = offset.lossyScale;
             scale.x = scale.x >= 0.0f ? 1.0f : -1.0f;
             scale.y = scale.y >= 0.0f ? 1.0f : -1.0f;
             scale.z = scale.z >= 0.0f ? 1.0f : -1.0f;
-            var debugSourcePose = new NativeArray<NativeTransform>(SourcePose, Temp);
-            ApplyOffset(ref debugSourcePose, offset, scale);
-            _sourceSkeletonDraw.LoadDraw(debugSourcePose.Length, SourceSkeletonData.ParentIndices, debugSourcePose);
-            _sourceSkeletonDraw.Draw();
+            var debugPose = new NativeArray<NativeTransform>(pose, Temp);
+            ApplyOffset(ref debugPose, offset, scale);
+            skeletonDraw.LoadDraw(debugPose.Length, SourceSkeletonData.ParentIndices, debugPose);
+            skeletonDraw.Draw();
         }
 
         /// <summary>
@@ -534,20 +576,52 @@ namespace Meta.XR.Movement.Retargeting
         /// <param name="useWorldPose">If rendering world transforms.</param>
         public void DrawDebugTargetPose(Transform offset, Color color, bool useWorldPose = false)
         {
-            _targetSkeletonDraw ??= new SkeletonDraw();
-            if (_targetSkeletonDraw.LineThickness <= float.Epsilon || _targetSkeletonDraw.TintColor != color)
-            {
-                _targetSkeletonDraw.InitDraw(color);
-            }
-
-            var scale = offset.lossyScale;
             var targetWorldPose = useWorldPose
                 ? new NativeArray<NativeTransform>(RetargetedPose, Temp)
                 : GetWorldPoseFromLocalPose(RetargetedPoseLocal);
-            ApplyOffset(ref targetWorldPose, offset, scale);
-            _targetSkeletonDraw.LoadDraw(targetWorldPose.Length, TargetSkeletonData.ParentIndices, targetWorldPose);
-            _targetSkeletonDraw.Draw();
-            targetWorldPose.Dispose();
+            DrawDebugTargetSkeleton(ref _targetSkeletonDraw, targetWorldPose, offset, color);
+        }
+
+        /// <summary>
+        /// Debug draw the target T-pose (reference pose).
+        /// </summary>
+        public void DrawDebugTargetTPose(Transform offset, Color color)
+        {
+            if (!TargetReferencePoseLocal.IsCreated || TargetReferencePoseLocal.Length == 0)
+            {
+                return;
+            }
+
+            if (TargetReferencePoseLocal.Length == 1)
+            {
+                var worldPose = GetWorldPoseFromLocalPose(TargetReferencePoseLocal);
+                var pos = offset.position + offset.rotation * Vector3.Scale(offset.lossyScale, worldPose[0].Position);
+                MeshDraw.DrawSphere(color, 0.04f, pos);
+                worldPose.Dispose();
+                return;
+            }
+
+            var targetTPoseWorld = GetWorldPoseFromLocalPose(TargetReferencePoseLocal);
+            DrawDebugTargetSkeleton(ref _targetTPoseSkeletonDraw, targetTPoseWorld, offset, color);
+        }
+
+        private void DrawDebugTargetSkeleton(
+            ref SkeletonDraw skeletonDraw,
+            NativeArray<NativeTransform> worldPose,
+            Transform offset,
+            Color color)
+        {
+            skeletonDraw ??= new SkeletonDraw();
+            if (skeletonDraw.LineThickness <= float.Epsilon || skeletonDraw.TintColor != color)
+            {
+                skeletonDraw.InitDraw(color);
+            }
+
+            var scale = offset.lossyScale;
+            ApplyOffset(ref worldPose, offset, scale);
+            skeletonDraw.LoadDraw(worldPose.Length, TargetSkeletonData.ParentIndices, worldPose);
+            skeletonDraw.Draw();
+            worldPose.Dispose();
         }
 
         /// <summary>
