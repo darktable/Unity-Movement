@@ -1,3 +1,15 @@
+## [203.0.0]
+
+## What's New
+- **Retargeting C# API**: New public `RunDefaultRetargetingSetup` C# API that runs the character retargeting setup programmatically. Previously the retargeting tool was only accessible through the custom Editor UI; it can now be driven from code.
+- **T-Pose debug drawing**: Added T-pose debug drawing for both the source and target skeletons, making it easier to visualize and debug retargeting.
+
+## What's Changed
+- Disabled the T-pose debug buttons in the networking sample scene.
+
+## What's Fixed
+- Fixed: building project with Unity 6000.4 results in the "Namespace 'com.oculus.Integration' is used in multiple modules and/or libraries: :MetaMovementSDK_AIMotionSynthesizer" compilation error.
+
 ## [201.0.0]
 
 ## What's New

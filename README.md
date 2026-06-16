@@ -76,3 +76,9 @@ The API reference for this package can be found [here](https://oculus-samples.gi
 Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved. Your use of this SDK or tool is subject to the Oculus SDK License Agreement, available at https://developer.oculus.com/licenses/oculussdk/
 
 Files from [Unity](https://unity.com/legal/licenses/unity-companion-license) and [SchemingDeveloper](https://github.com/oculus-samples/Unity-Movement/blob/main/Runtime/Tracking/ThirdParty/SchemingDeveloper/LICENSE.txt) are licensed under their respective licensing terms.
+
+## AI coding agents
+
+This repo is wired up for AI coding agents — `AGENTS.md`, `.vscode/extensions.json`, `.mcp.json`, `.cursor/rules/`, and a few client-specific dotfiles surface the **Meta Horizon** VS Code/Cursor extension, the `hzdb` MCP server, and the Meta Quest skill set automatically.
+
+Full toolchain (including Unity skills and per-client install instructions): <https://github.com/meta-quest/agentic-tools>

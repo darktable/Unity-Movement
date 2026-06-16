@@ -10,6 +10,7 @@ using Unity.Collections;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
 
 namespace Meta.XR.Movement.Editor
@@ -380,6 +381,266 @@ namespace Meta.XR.Movement.Editor
         {
             var assetPath = AssetDatabase.GetAssetPath(target);
             EnterAlignmentScene(assetPath, customDataSourceName);
+        }
+
+        /// <summary>
+        /// Convenience menu wrapper for <see cref="RunDefaultRetargetingSetup"/>.
+        /// </summary>
+        [MenuItem(_movementAssetsPath + "Body Tracking/Run Default Retargeting Setup")]
+        private static void RunDefaultRetargetingSetupMenu()
+        {
+            if (Selection.objects.Length > 1)
+            {
+                Debug.LogError("Select a single FBX/prefab asset to run default retargeting setup.");
+                return;
+            }
+
+            var asset = Selection.activeGameObject;
+            if (asset == null)
+            {
+                Debug.LogError("An asset must be selected.");
+                return;
+            }
+
+            var metadata = RunDefaultRetargetingSetup(asset);
+            if (metadata != null && metadata.ConfigJson != null)
+            {
+                Debug.Log($"Default retargeting setup complete. Config: {AssetDatabase.GetAssetPath(metadata.ConfigJson)}");
+            }
+        }
+
+        /// <summary>
+        /// Headless equivalent of opening the Retargeting Configuration Editor and clicking
+        /// Next-Next-Next-"Validate and save config"-Done with no manual edits. Produces the same
+        /// two artifacts (config JSON + metadata ScriptableObject) without spawning any UI window
+        /// or preview stage.
+        /// </summary>
+        /// <param name="asset">The FBX or prefab GameObject to configure.</param>
+        /// <param name="customDataSourcePath">Optional custom source skeleton data name/path.</param>
+        /// <returns>The metadata asset bound to the produced JSON, or null on failure.</returns>
+        public static MSDKUtilityEditorMetadata RunDefaultRetargetingSetup(
+            GameObject asset, string customDataSourcePath = null)
+        {
+            if (asset == null)
+            {
+                Debug.LogError("RunDefaultRetargetingSetup: asset is null.");
+                return null;
+            }
+
+            // 1. Hidden preview scene + instantiated character.
+            // Created up front so we never need to mutate the asset itself (which triggers
+            // immutable-package warnings / save dialogs).
+            var previewScene = EditorSceneManager.NewPreviewScene();
+            previewScene.name = asset.name + " HeadlessConfig";
+
+            GameObject sceneCharacter = null;
+            var config = ScriptableObject.CreateInstance<MSDKUtilityEditorConfig>();
+            try
+            {
+                sceneCharacter = (GameObject)PrefabUtility.InstantiatePrefab(asset);
+                if (sceneCharacter == null)
+                {
+                    sceneCharacter = Object.Instantiate(asset);
+                }
+                sceneCharacter.name = sceneCharacter.name.Replace("(Clone)", "");
+                sceneCharacter.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+                SceneManager.MoveGameObjectToScene(sceneCharacter, previewScene);
+
+                // Match the UI's "uniform scale" guard (non-interactive branch only).
+                var rootJoint = sceneCharacter.transform.GetAllChildren().FirstOrDefault(child =>
+                    child.childCount > 0 && child.GetComponent<SkinnedMeshRenderer>() == null);
+                var importer = AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(asset)) as ModelImporter;
+                if (importer != null && rootJoint != null && rootJoint.localScale != Vector3.one)
+                {
+                    Debug.LogWarning(
+                        "Character joints must be uniform scale for retargeting. Forcing root joint scale to one.");
+                    sceneCharacter.transform.localScale = Vector3.one * importer.globalScale;
+                    rootJoint.localScale = Vector3.one;
+                }
+
+                // 2. Find or create the metadata ScriptableObject (no JSON yet).
+                var metadata = FindOrCreateMetadataAsset(asset);
+
+                // 3. Build the initial JSON from the instantiated character (safe to read transforms;
+                // bypasses MSDKUtilityEditor.CreateRetargetingConfig which mutates the source asset).
+                if (metadata.ConfigJson == null)
+                {
+                    var assetPath = AssetDatabase.GetAssetPath(asset);
+                    var assetPathExtension = Path.GetExtension(assetPath);
+                    var jsonPath = assetPath.Substring(0, assetPath.Length - assetPathExtension.Length) + ".json";
+                    BuildAndSaveInitialConfig(sceneCharacter, jsonPath, customDataSourcePath);
+                    metadata.ConfigJson = AssetDatabase.LoadAssetAtPath<TextAsset>(jsonPath);
+                    if (metadata.ConfigJson == null)
+                    {
+                        Debug.LogError($"RunDefaultRetargetingSetup: failed to create initial config at {jsonPath}.");
+                        return metadata;
+                    }
+                    EditorUtility.SetDirty(metadata);
+                    AssetDatabase.SaveAssets();
+                }
+
+                config.MetadataAssetPath = AssetDatabase.GetAssetPath(asset);
+                config.EditorMetadataObject = metadata;
+
+                // 3. Replay the UI's exact Next-Next-Next-Validate-Done sequence:
+                //   Step Configuration: Load + UpdateAndReload(save=true)
+                //   Step MinTPose:      Load + UpdateAndReload(save=false, updateMappings=true)  [overlay auto-update on scene paint]
+                //                              + UpdateAndReload(save=true)                      [Click Next]
+                //   Step MaxTPose:      same pattern as MinTPose
+                //   Step Review:        Load + SaveConfigCore                                    [Click Validate]
+                //                              + UpdateAndReload(save=true)                      [Click Done]
+                // Auto-update-mappings only fires for MinTPose/MaxTPose in the UI
+                // (see MSDKUtilityEditorPreviewer.UpdateTargetDraw's step guard).
+
+                // Configuration step.
+                config.Step = MSDKUtilityEditorConfig.EditorStep.Configuration;
+                MSDKUtilityEditorConfig.LoadConfigCore(
+                    config, metadata, config.Step, ref sceneCharacter, previewScene,
+                    previewRetargeter: null, MSDKUtility.SkeletonTPoseType.UnscaledTPose);
+                UpdateAndReload(config, metadata, ref sceneCharacter, previewScene,
+                    saveConfig: true, updateMappings: false);
+
+                // MinTPose step.
+                config.Step = MSDKUtilityEditorConfig.EditorStep.MinTPose;
+                MSDKUtilityEditorConfig.LoadConfigCore(
+                    config, metadata, config.Step, ref sceneCharacter, previewScene,
+                    previewRetargeter: null, MSDKUtility.SkeletonTPoseType.MinTPose);
+                UpdateAndReload(config, metadata, ref sceneCharacter, previewScene,
+                    saveConfig: false, updateMappings: true);
+                UpdateAndReload(config, metadata, ref sceneCharacter, previewScene,
+                    saveConfig: true, updateMappings: false);
+
+                // MaxTPose step.
+                config.Step = MSDKUtilityEditorConfig.EditorStep.MaxTPose;
+                MSDKUtilityEditorConfig.LoadConfigCore(
+                    config, metadata, config.Step, ref sceneCharacter, previewScene,
+                    previewRetargeter: null, MSDKUtility.SkeletonTPoseType.MaxTPose);
+                UpdateAndReload(config, metadata, ref sceneCharacter, previewScene,
+                    saveConfig: false, updateMappings: true);
+                UpdateAndReload(config, metadata, ref sceneCharacter, previewScene,
+                    saveConfig: true, updateMappings: false);
+
+                // Review step.
+                config.Step = MSDKUtilityEditorConfig.EditorStep.Review;
+                MSDKUtilityEditorConfig.LoadConfigCore(
+                    config, metadata, config.Step, ref sceneCharacter, previewScene,
+                    previewRetargeter: null, MSDKUtility.SkeletonTPoseType.UnscaledTPose);
+                MSDKUtilityEditorConfig.SaveConfigCore(metadata, config.ConfigHandle);
+                UpdateAndReload(config, metadata, ref sceneCharacter, previewScene,
+                    saveConfig: true, updateMappings: false);
+
+                return metadata;
+            }
+            finally
+            {
+                foreach (var handle in config.Handles)
+                {
+                    MSDKUtility.DestroyHandle(handle);
+                }
+                Object.DestroyImmediate(config);
+                if (sceneCharacter != null)
+                {
+                    Object.DestroyImmediate(sceneCharacter);
+                }
+                EditorSceneManager.ClosePreviewScene(previewScene);
+            }
+        }
+
+        /// <summary>
+        /// Headless equivalent of MSDKUtilityEditorConfig.UpdateConfig(window) — runs UpdateConfigCore
+        /// and then mirrors the wrapper's post-Update LoadConfig (from disk if saveConfig=true,
+        /// otherwise from the in-memory JSON returned by UpdateConfigCore).
+        /// </summary>
+        private static void UpdateAndReload(MSDKUtilityEditorConfig config, MSDKUtilityEditorMetadata metadata,
+            ref GameObject sceneCharacter, Scene previewScene,
+            bool saveConfig, bool updateMappings)
+        {
+            var data = MSDKUtilityEditorConfig.UpdateConfigCore(
+                config, metadata,
+                saveConfig: saveConfig, updateMappings: updateMappings, performAlignment: false,
+                twistJointOverride: null, childAlignedTwistBlockList: null);
+
+            var tPoseType = config.Step switch
+            {
+                MSDKUtilityEditorConfig.EditorStep.MinTPose => MSDKUtility.SkeletonTPoseType.MinTPose,
+                MSDKUtilityEditorConfig.EditorStep.MaxTPose => MSDKUtility.SkeletonTPoseType.MaxTPose,
+                _ => MSDKUtility.SkeletonTPoseType.UnscaledTPose,
+            };
+            // Match the UI wrapper: LoadConfig(win) when saveConfig=true (re-reads disk JSON),
+            // LoadConfig(win, data) when saveConfig=false (re-reads the in-memory JSON).
+            MSDKUtilityEditorConfig.LoadConfigCore(
+                config, metadata, config.Step, ref sceneCharacter, previewScene,
+                previewRetargeter: null, tPoseType, customConfig: saveConfig ? null : data);
+        }
+
+        /// <summary>
+        /// Headless-safe variant of the metadata creation step from <see cref="GetOrCreateMetadata"/>.
+        /// Locates an existing <see cref="MSDKUtilityEditorMetadata"/> for the asset, or creates a new
+        /// one. Does NOT touch the asset's transform and does NOT auto-create a JSON config.
+        /// </summary>
+        private static MSDKUtilityEditorMetadata FindOrCreateMetadataAsset(GameObject asset)
+        {
+            var assetPath = AssetDatabase.GetAssetPath(asset);
+            var assetPathExtension = Path.GetExtension(assetPath);
+            var assetPathSansExtension = assetPath.Substring(0, assetPath.Length - assetPathExtension.Length);
+            var metadataAssetPath = assetPathSansExtension + "-metadata.asset";
+
+            var metadata = AssetDatabase.LoadAssetAtPath<MSDKUtilityEditorMetadata>(metadataAssetPath);
+            if (metadata != null)
+            {
+                return metadata;
+            }
+
+            metadata = MSDKUtilityEditorMetadata.FindMetadataAsset(asset);
+            if (metadata != null)
+            {
+                return metadata;
+            }
+
+            metadata = ScriptableObject.CreateInstance<MSDKUtilityEditorMetadata>();
+            metadata.Model = asset;
+            AssetDatabase.CreateAsset(metadata, metadataAssetPath);
+            return metadata;
+        }
+
+        /// <summary>
+        /// Builds the initial retargeting config JSON from the instantiated character in the preview
+        /// scene and writes it to <paramref name="jsonPath"/>. Mirrors the data-only portion of
+        /// <see cref="CreateRetargetingConfig()"/> but never touches the source asset.
+        /// </summary>
+        private static void BuildAndSaveInitialConfig(GameObject sceneCharacter, string jsonPath,
+            string customDataSourceName)
+        {
+            var sourceData = !string.IsNullOrEmpty(customDataSourceName)
+                ? FindSourceSkeletonData(customDataSourceName)
+                : FindSourceSkeletonData("OVRSkeletonData");
+            if (sourceData == null)
+            {
+                Debug.LogError("BuildAndSaveInitialConfig: failed to load source skeleton data.");
+                return;
+            }
+
+            var targetData = SkeletonData.CreateFromTransform(sceneCharacter.transform);
+            var skinnedMeshes = sceneCharacter.GetComponentsInChildren<SkinnedMeshRenderer>();
+            var blendshapeNames = new HashSet<string>();
+            foreach (var smr in skinnedMeshes)
+            {
+                if (smr.sharedMesh == null) continue;
+                int n = smr.sharedMesh.blendShapeCount;
+                for (int i = 0; i < n; i++) blendshapeNames.Add(smr.sharedMesh.GetBlendShapeName(i));
+            }
+
+            var configJsonString = MSDKUtilityHelper.CreateRetargetingConfig(
+                blendshapeNames.ToArray(), sourceData, targetData, sceneCharacter.name);
+            if (string.IsNullOrEmpty(configJsonString))
+            {
+                Debug.LogError("BuildAndSaveInitialConfig: native CreateRetargetingConfig returned empty.");
+                return;
+            }
+
+            File.WriteAllText(jsonPath, configJsonString);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
         }
 
         /// <summary>
