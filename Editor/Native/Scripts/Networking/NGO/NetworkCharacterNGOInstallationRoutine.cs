@@ -20,13 +20,13 @@ namespace Meta.XR.Movement.Networking.NGO.Editor
         /// <param name="block">The block to be installed</param>
         /// <param name="selectedGameObject">The selected game object</param>
         /// <returns>The installed game object instances.</returns>
-        /// <exception cref="OVRConfigurationTaskException">Error with executing this block.</exception>
+        /// <exception cref="System.Exception">Error with executing this block.</exception>
         public override List<GameObject> Install(BlockData block, GameObject selectedGameObject)
         {
             var characterPrefab = NetworkCharacterSpawnerEditor.CreateCharacterPrefabFromModel();
             if (characterPrefab == null)
             {
-                throw new OVRConfigurationTaskException("Must have a configured retargeted character for networking!");
+                throw new System.Exception("Must have a configured retargeted character for networking!");
             }
 
             var installation = base.Install(block, selectedGameObject);
