@@ -1,9 +1,9 @@
 {
   "name": "com.meta.xr.sdk.movement",
   "displayName": "Meta XR Movement SDK",
-  "version": "201.0.0",
-  "unity": "2022.3",
-  "unityRelease": "15f1",
+  "version": "203.0.0",
+  "unity": "6000.0",
+  "unityRelease": "66f2",
   "keywords": [
     "Meta",
     "Oculus",
