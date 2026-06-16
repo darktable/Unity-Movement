@@ -303,10 +303,13 @@ namespace Meta.XR.Movement.Editor
         }
 
         /// <summary>
-        /// Associates the scene character with the target configuration.
+        /// Headless equivalent of <see cref="AssociateSceneCharacter(Meta.XR.Movement.Editor.MSDKUtilityEditorConfig)"/>: resolves joint transforms in
+        /// <paramref name="sceneCharacter"/> using <paramref name="target"/>, optionally wrapping the
+        /// character in a "PreviewCharacter" parent inside <paramref name="previewScene"/>. Returns the
+        /// (possibly re-wrapped) scene character through the ref parameter.
         /// </summary>
-        /// <param name="target">The target configuration.</param>
-        public void AssociateSceneCharacter(MSDKUtilityEditorConfig target)
+        internal static void AssociateSceneCharacterCore(MSDKUtilityEditorConfig target,
+            ref GameObject sceneCharacter, UnityEngine.SceneManagement.Scene previewScene)
         {
             var targetJointCount = target.SkeletonInfo.JointCount;
 
@@ -316,15 +319,15 @@ namespace Meta.XR.Movement.Editor
             }
 
             // Check if scene view character is null or destroyed
-            if (_sceneViewCharacter == null)
+            if (sceneCharacter == null)
             {
                 return;
             }
 
-            var rootSearchTransform = _sceneViewCharacter.transform;
-            for (var i = 0; i < _sceneViewCharacter.transform.childCount; i++)
+            var rootSearchTransform = sceneCharacter.transform;
+            for (var i = 0; i < sceneCharacter.transform.childCount; i++)
             {
-                var child = _sceneViewCharacter.transform.GetChild(i);
+                var child = sceneCharacter.transform.GetChild(i);
                 if (child.GetComponent<SkinnedMeshRenderer>() == null && child.childCount >= 1 &&
                     child.GetChild(0).GetComponent<SkinnedMeshRenderer>() == null)
                 {
@@ -345,17 +348,17 @@ namespace Meta.XR.Movement.Editor
             }
 
             // Associate root joint.
-            MSDKUtilityHelper.GetRootJoint(target.ConfigHandle, _sceneViewCharacter.transform, out var index,
+            MSDKUtilityHelper.GetRootJoint(target.ConfigHandle, sceneCharacter.transform, out var index,
                 out var rootJoint);
             target.SkeletonJoints[index] = rootJoint;
 
             // In the case we don't have a root, create one for previewing
-            if (_sceneViewCharacter.transform.name != "PreviewCharacter" && _window.PreviewStage.scene.IsValid())
+            if (sceneCharacter.transform.name != "PreviewCharacter" && previewScene.IsValid())
             {
                 var previewCharacterParent = new GameObject("PreviewCharacter");
-                SceneManager.MoveGameObjectToScene(previewCharacterParent, _window.PreviewStage.scene);
-                _sceneViewCharacter.transform.parent = previewCharacterParent.transform;
-                _sceneViewCharacter = previewCharacterParent;
+                SceneManager.MoveGameObjectToScene(previewCharacterParent, previewScene);
+                sceneCharacter.transform.parent = previewCharacterParent.transform;
+                sceneCharacter = previewCharacterParent;
             }
 
             // Associate known joints.
@@ -375,17 +378,34 @@ namespace Meta.XR.Movement.Editor
         }
 
         /// <summary>
-        /// Reloads the character with the target configuration.
+        /// Associates the scene character with the target configuration.
         /// </summary>
         /// <param name="target">The target configuration.</param>
-        public void ReloadCharacter(MSDKUtilityEditorConfig target)
+        public void AssociateSceneCharacter(MSDKUtilityEditorConfig target)
         {
-            if (_sceneViewCharacter == null || target.SkeletonJoints.Length == 0 || target.SkeletonJoints[0] == null)
+            var previewScene = _window != null && _window.PreviewStage != null
+                ? _window.PreviewStage.scene
+                : default;
+            AssociateSceneCharacterCore(target, ref _sceneViewCharacter, previewScene);
+        }
+
+        /// <summary>
+        /// Headless equivalent of <see cref="ReloadCharacter"/>: writes <paramref name="target"/>'s
+        /// CurrentPose onto <paramref name="sceneCharacter"/>'s joint transforms using the supplied
+        /// <paramref name="rootScale"/>. Skips Undo recording since this is intended for non-UI flows.
+        /// </summary>
+        internal static void ReloadCharacterCore(MSDKUtilityEditorConfig target, GameObject sceneCharacter,
+            Vector3 rootScale, bool recordUndo)
+        {
+            if (sceneCharacter == null || target.SkeletonJoints.Length == 0 || target.SkeletonJoints[0] == null)
             {
                 return;
             }
 
-            Undo.RecordObject(_sceneViewCharacter.transform, "Reload Character");
+            if (recordUndo)
+            {
+                Undo.RecordObject(sceneCharacter.transform, "Reload Character");
+            }
 
             // First, do scale.
             if (!GetJointIndexByKnownJointType(target.ConfigHandle, SkeletonType.TargetSkeleton,
@@ -400,7 +420,7 @@ namespace Meta.XR.Movement.Editor
 
             // Apply root scale more carefully to prevent compounding issues
             // Use the utility config root scale directly instead of combining with T-pose scale
-            var finalRootScale = _window.Config.RootScale;
+            var finalRootScale = rootScale;
 
             // Validate the final root scale before applying
             if (finalRootScale.x < MinScale || finalRootScale.y < MinScale || finalRootScale.z < MinScale ||
@@ -411,9 +431,12 @@ namespace Meta.XR.Movement.Editor
                 finalRootScale = Vector3.one;
             }
 
-            _sceneViewCharacter.transform.localScale = finalRootScale;
+            sceneCharacter.transform.localScale = finalRootScale;
             rootJoint.SetPositionAndRotation(rootTPose.Position, rootTPose.Orientation);
-            Undo.RecordObject(rootJoint, "Reload Character");
+            if (recordUndo)
+            {
+                Undo.RecordObject(rootJoint, "Reload Character");
+            }
 
             for (var i = 0; i < target.SkeletonJoints.Length; i++)
             {
@@ -451,9 +474,21 @@ namespace Meta.XR.Movement.Editor
                     continue;
                 }
 
-                Undo.RecordObject(joint, "Reload Character");
+                if (recordUndo)
+                {
+                    Undo.RecordObject(joint, "Reload Character");
+                }
                 joint.SetPositionAndRotation(tPose.Position, tPose.Orientation);
             }
+        }
+
+        /// <summary>
+        /// Reloads the character with the target configuration.
+        /// </summary>
+        /// <param name="target">The target configuration.</param>
+        public void ReloadCharacter(MSDKUtilityEditorConfig target)
+        {
+            ReloadCharacterCore(target, _sceneViewCharacter, _window.Config.RootScale, recordUndo: true);
         }
     }
 }

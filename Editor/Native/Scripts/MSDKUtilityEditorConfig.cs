@@ -227,6 +227,35 @@ namespace Meta.XR.Movement.Editor
          **********************************************************/
 
         /// <summary>
+        /// Headless equivalent of <see cref="SaveConfig(Meta.XR.Movement.Editor.MSDKUtilityEditorWindow,bool)"/>: writes the config JSON for
+        /// <paramref name="metadata"/>'s ConfigJson asset using <paramref name="configHandle"/>.
+        /// Skips the user dialog and the missing-JSON CreateConfig fallback.
+        /// </summary>
+        /// <returns>True if a write occurred; false if metadata had no ConfigJson asset.</returns>
+        internal static bool SaveConfigCore(MSDKUtilityEditorMetadata metadata, ulong configHandle)
+        {
+            if (metadata.ConfigJson == null)
+            {
+                return false;
+            }
+
+            var configJson = metadata.ConfigJson;
+            var path = AssetDatabase.GetAssetPath(configJson);
+            if (!WriteConfigDataToJson(configHandle, out var data))
+            {
+                Debug.LogError("Failed to write config data to JSON");
+                return false;
+            }
+
+            File.WriteAllText(path, data);
+            AssetDatabase.SaveAssetIfDirty(configJson);
+            AssetDatabase.Refresh();
+            EditorUtility.SetDirty(AssetDatabase.LoadAssetAtPath<TextAsset>(path));
+            AssetDatabase.SaveAssets();
+            return true;
+        }
+
+        /// <summary>
         /// Saves the configuration.
         /// </summary>
         /// <param name="win">The editor window.</param>
@@ -245,20 +274,7 @@ namespace Meta.XR.Movement.Editor
                     }
                 }
 
-                var configHandle = win.ConfigHandle;
-                var configJson = win.EditorMetadataObject.ConfigJson;
-                var path = AssetDatabase.GetAssetPath(configJson);
-                if (!WriteConfigDataToJson(configHandle, out var data))
-                {
-                    Debug.LogError("Failed to write config data to JSON");
-                    return;
-                }
-
-                File.WriteAllText(path, data);
-                AssetDatabase.SaveAssetIfDirty(configJson);
-                AssetDatabase.Refresh();
-                EditorUtility.SetDirty(AssetDatabase.LoadAssetAtPath<TextAsset>(path));
-                AssetDatabase.SaveAssets();
+                SaveConfigCore(win.EditorMetadataObject, win.ConfigHandle);
             }
             else
             {
@@ -278,13 +294,40 @@ namespace Meta.XR.Movement.Editor
         public static void UpdateConfig(MSDKUtilityEditorWindow win, bool saveConfig, bool updateMappings,
             bool performAlignment, bool? twistJointOverride = null)
         {
-            var config = win.Config;
+            var resolvedTwistOverride = twistJointOverride ?? win.Overlay?.ShouldMapTwistJoints;
+            var data = UpdateConfigCore(win.Config, win.EditorMetadataObject,
+                saveConfig, updateMappings, performAlignment,
+                resolvedTwistOverride, win.Overlay?.ChildAlignedTwistBlockList);
+            if (saveConfig)
+            {
+                LoadConfig(win);
+            }
+            else
+            {
+                LoadConfig(win, data);
+            }
+        }
+
+        /// <summary>
+        /// Headless equivalent of <see cref="UpdateConfig"/>: rebuilds the native config from the
+        /// supplied <paramref name="config"/>'s current state, optionally saves to
+        /// <paramref name="metadata"/>'s ConfigJson, and returns the freshly serialized JSON. The
+        /// caller is responsible for any post-call LoadConfig/refresh — this method does not touch
+        /// scene character transforms or previewer state.
+        /// </summary>
+        /// <param name="twistJointOverride">If null, defaults to true (matches the UI's overlay default).</param>
+        /// <param name="childAlignedTwistBlockList">If null/empty, no joints are excluded from twist mapping.</param>
+        internal static string UpdateConfigCore(
+            MSDKUtilityEditorConfig config, MSDKUtilityEditorMetadata metadata,
+            bool saveConfig, bool updateMappings, bool performAlignment,
+            bool? twistJointOverride, IReadOnlyList<int> childAlignedTwistBlockList)
+        {
             JointAlignmentUtility.UpdateTPoseData(config);
 
             if (config.TargetSkeletonData == null || config.SourceSkeletonData == null)
             {
                 Debug.LogError("Missing source/target skeleton data!");
-                return;
+                return null;
             }
 
             GetSkeletonMappings(config.ConfigHandle, SkeletonTPoseType.MinTPose, out var minJointMapping);
@@ -375,18 +418,20 @@ namespace Meta.XR.Movement.Editor
                     break;
             }
 
-            UpdateConfigAlignSave(win, saveConfig, updateMappings, performAlignment, nativePose,
-                ref initParams, minJointMapping, maxJointMapping, minJointMappingEntries, maxJointMappingEntries,
-                twistJointOverride);
+            return UpdateConfigAlignSaveCore(config, metadata, saveConfig, updateMappings, performAlignment,
+                nativePose, ref initParams, minJointMapping, maxJointMapping,
+                minJointMappingEntries, maxJointMappingEntries,
+                twistJointOverride, childAlignedTwistBlockList);
         }
 
-        private static void UpdateConfigAlignSave(MSDKUtilityEditorWindow win, bool saveConfig, bool updateMappings,
-            bool performAlignment, NativeArray<NativeTransform> nativePose, ref ConfigInitParams initParams,
+        private static string UpdateConfigAlignSaveCore(
+            MSDKUtilityEditorConfig config, MSDKUtilityEditorMetadata metadata,
+            bool saveConfig, bool updateMappings, bool performAlignment,
+            NativeArray<NativeTransform> nativePose, ref ConfigInitParams initParams,
             NativeArray<JointMapping> minJointMapping, NativeArray<JointMapping> maxJointMapping,
             NativeArray<JointMappingEntry> minJointMappingEntries, NativeArray<JointMappingEntry> maxJointMappingEntries,
-            bool? twistJointOverride = null)
+            bool? twistJointOverride, IReadOnlyList<int> childAlignedTwistBlockList)
         {
-            var config = win.Config;
             switch (performAlignment)
             {
                 case true when AlignInputToSource(config.ConfigName, AlignmentFlags.All, nativePose,
@@ -422,21 +467,20 @@ namespace Meta.XR.Movement.Editor
             {
                 Debug.LogError("Was unable to create or update the config with data. Re-using old handle.");
             }
-            win.Config.AddHandle(newConfigHandle);
+            config.AddHandle(newConfigHandle);
 
             if (updateMappings)
             {
-                var shouldMapTwistJoints = twistJointOverride ?? (win.Overlay?.ShouldMapTwistJoints ?? true);
-                var childAlignedTwistBlocklist = win.Overlay?.ChildAlignedTwistBlockList;
+                var shouldMapTwistJoints = twistJointOverride ?? true;
 
                 // Convert childAlignedTwistBlocklist to AutoMappingJointData array
                 AutoMappingJointData[] additionalJointData = null;
-                if (childAlignedTwistBlocklist != null && childAlignedTwistBlocklist.Count > 0)
+                if (childAlignedTwistBlockList != null && childAlignedTwistBlockList.Count > 0)
                 {
-                    additionalJointData = new AutoMappingJointData[childAlignedTwistBlocklist.Count];
-                    for (int i = 0; i < childAlignedTwistBlocklist.Count; i++)
+                    additionalJointData = new AutoMappingJointData[childAlignedTwistBlockList.Count];
+                    for (int i = 0; i < childAlignedTwistBlockList.Count; i++)
                     {
-                        int jointIndex = childAlignedTwistBlocklist[i];
+                        int jointIndex = childAlignedTwistBlockList[i];
                         additionalJointData[i] = new AutoMappingJointData
                         {
                             JointName = initParams.TargetSkeleton.JointNames[jointIndex],
@@ -451,16 +495,16 @@ namespace Meta.XR.Movement.Editor
             }
 
             config.ConfigHandle = newConfigHandle;
+            string data = null;
             if (saveConfig)
             {
-                SaveConfig(win, false);
-                LoadConfig(win);
+                SaveConfigCore(metadata, config.ConfigHandle);
             }
             else
             {
-                WriteConfigDataToJson(newConfigHandle, out var data);
-                LoadConfig(win, data);
+                WriteConfigDataToJson(newConfigHandle, out data);
             }
+            return data;
         }
 
         /// <summary>
@@ -489,10 +533,32 @@ namespace Meta.XR.Movement.Editor
             SkeletonTPoseType targetTPoseType,
             string customConfig = null)
         {
-            var config = win.Config;
+            var sceneCharacter = win.Previewer.SceneViewCharacter;
+            var previewScene = win.PreviewStage != null ? win.PreviewStage.scene : default;
+            LoadConfigCore(
+                win.Config, win.EditorMetadataObject, win.Step,
+                ref sceneCharacter, previewScene, win.Previewer.Retargeter,
+                targetTPoseType, customConfig);
+            win.Previewer.SceneViewCharacter = sceneCharacter;
+        }
 
+        /// <summary>
+        /// Headless equivalent of <see cref="LoadConfig(MSDKUtilityEditorWindow, SkeletonTPoseType, string)"/>:
+        /// initializes <paramref name="config"/> from JSON, associates joint transforms in
+        /// <paramref name="sceneCharacter"/>, and applies the resulting pose. No previewer/overlay/window state.
+        /// <paramref name="sceneCharacter"/> is taken by ref because the previewer may re-wrap it
+        /// in a "PreviewCharacter" parent on the first call, and subsequent calls must see the wrapped
+        /// reference to avoid stacking parents.
+        /// </summary>
+        internal static void LoadConfigCore(
+            MSDKUtilityEditorConfig config, MSDKUtilityEditorMetadata metadata,
+            EditorStep step, ref GameObject sceneCharacter,
+            UnityEngine.SceneManagement.Scene previewScene,
+            CharacterRetargeter previewRetargeter,
+            SkeletonTPoseType targetTPoseType, string customConfig = null)
+        {
             // Create new config to be cached; this is destructive.
-            var configJson = config.EditorMetadataObject.ConfigJson.text;
+            var configJson = metadata.ConfigJson.text;
             if (!string.IsNullOrEmpty(customConfig))
             {
                 configJson = customConfig;
@@ -502,30 +568,30 @@ namespace Meta.XR.Movement.Editor
             config.Initialize(configJson, targetTPoseType);
 
             // Update the source skeleton data's TPoseArray to point to the correct array based on the current step
-            UpdateSourceTPoseForStep(config, win.Step);
+            UpdateSourceTPoseForStep(config, step);
 
             // Store created handle.
-            win.Config.AddHandle(config.ConfigHandle);
+            config.AddHandle(config.ConfigHandle);
 
             // Setup preview.
-            if (win.Previewer.Retargeter != null)
+            if (previewRetargeter != null)
             {
-                win.Previewer.Retargeter.Setup(configJson);
+                previewRetargeter.Setup(configJson);
             }
 
             // Setup scale only for specific scenarios
-            if (!win.Config.CurrentlyEditing && !win.Config.SetTPose)
+            if (!config.CurrentlyEditing && !config.SetTPose)
             {
                 // Only auto-scale when entering min/max t-pose screens for the first time
                 // or when align skeleton button is pressed (handled in PerformAutoAlignment)
                 bool shouldAutoScale = false;
 
                 // Check if this is the first time entering min/max t-pose screens
-                if ((win.Step == EditorStep.MinTPose || win.Step == EditorStep.MaxTPose) &&
-                    !win.Config.HasEnteredTPoseScreen)
+                if ((step == EditorStep.MinTPose || step == EditorStep.MaxTPose) &&
+                    !config.HasEnteredTPoseScreen)
                 {
                     shouldAutoScale = true;
-                    win.Config.HasEnteredTPoseScreen = true;
+                    config.HasEnteredTPoseScreen = true;
                 }
 
                 if (shouldAutoScale)
@@ -534,14 +600,15 @@ namespace Meta.XR.Movement.Editor
                 }
             }
 
-            win.Previewer.AssociateSceneCharacter(config);
-            win.Previewer.ReloadCharacter(config);
+            // sceneCharacter may be re-wrapped by AssociateSceneCharacterCore; pass through ref.
+            MSDKUtilityEditorPreviewer.AssociateSceneCharacterCore(config, ref sceneCharacter, previewScene);
+            MSDKUtilityEditorPreviewer.ReloadCharacterCore(config, sceneCharacter, config.RootScale, recordUndo: false);
 
             // For preview t-pose, set scale to 1 instead of loading from config
-            if (win.Config.Step == EditorStep.Review || win.Config.Step == EditorStep.Configuration)
+            if (step == EditorStep.Review || step == EditorStep.Configuration)
             {
                 // Preview t-pose should have scale set to 1
-                win.Config.RootScale = Vector3.one;
+                config.RootScale = Vector3.one;
             }
             else
             {
@@ -603,6 +670,37 @@ namespace Meta.XR.Movement.Editor
         }
 
         /// <summary>
+        /// Headless equivalent of <see cref="CreateConfig(Meta.XR.Movement.Editor.MSDKUtilityEditorWindow,bool,Meta.XR.Movement.Retargeting.SkeletonData,Meta.XR.Movement.Retargeting.SkeletonData)"/>: rewrites the JSON for
+        /// <paramref name="metadata"/> from <paramref name="config"/>'s state. Skips dialog and
+        /// post-create LoadConfig (caller is responsible for loading + reapplying to the scene).
+        /// </summary>
+        internal static void CreateConfigCore(
+            MSDKUtilityEditorConfig config, MSDKUtilityEditorMetadata metadata,
+            SkeletonData customSourceData = null,
+            SkeletonData customTargetData = null)
+        {
+            string configPath;
+            if (metadata.ConfigJson != null)
+            {
+                configPath = AssetDatabase.GetAssetPath(metadata.ConfigJson);
+            }
+            else
+            {
+                configPath = Path.ChangeExtension(AssetDatabase.GetAssetPath(metadata), ".json");
+            }
+
+            metadata.ConfigJson = MSDKUtilityEditor.CreateRetargetingConfig(
+                metadata.Model,
+                customSourceData,
+                customTargetData,
+                configPath,
+                false);
+
+            EditorUtility.SetDirty(metadata);
+            AssetDatabase.SaveAssets();
+        }
+
+        /// <summary>
         /// Creates a new configuration.
         /// </summary>
         /// <param name="win">The editor window.</param>
@@ -622,32 +720,15 @@ namespace Meta.XR.Movement.Editor
                 return;
             }
 
-            var configPath = string.Empty;
             if (win.EditorMetadataObject == null)
             {
                 var originalAsset =
                     AssetDatabase.LoadAssetAtPath(win.Config.MetadataAssetPath,
                         typeof(GameObject)) as GameObject;
                 win.EditorMetadataObject = MSDKUtilityEditorMetadata.FindMetadataAsset(originalAsset);
-                configPath = Path.ChangeExtension(AssetDatabase.GetAssetPath(win.EditorMetadataObject), ".json");
-            }
-            else if (win.EditorMetadataObject.ConfigJson != null)
-            {
-                configPath = AssetDatabase.GetAssetPath(win.EditorMetadataObject.ConfigJson);
             }
 
-            // Use the centralized config manager to create the configuration
-            // Pass the custom data directly to the CreateConfig method
-            // If we have an existing config, pass it so source data can be extracted from it
-            win.EditorMetadataObject.ConfigJson = MSDKUtilityEditor.CreateRetargetingConfig(
-                win.EditorMetadataObject.Model,
-                customSourceData,
-                customTargetData,
-                configPath,
-                false);
-
-            EditorUtility.SetDirty(win.EditorMetadataObject);
-            AssetDatabase.SaveAssets();
+            CreateConfigCore(win.Config, win.EditorMetadataObject, customSourceData, customTargetData);
             ResetConfig(win, false, win.EditorMetadataObject.ConfigJson.text);
         }
     }
