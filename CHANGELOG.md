@@ -1,3 +1,8 @@
+## [205.0.0]
+
+## What's Fixed
+- Fixed a compilation error in the Movement SDK caused by the removal of `OVRConfigurationTaskException` from the Meta XR Core SDK.
+
 ## [203.0.0]
 
 ## What's New
