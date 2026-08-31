@@ -1,4 +1,4 @@
-// Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
+﻿// Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
 
 using Unity.Burst;
 using Unity.Collections;
@@ -167,7 +167,13 @@ namespace Meta.XR.Movement.Retargeting
         private static OVRPlugin.Skeleton2 _skeleton;
         private static OVRSkeleton.SkeletonPoseData _data;
         private static NativeArray<NativeTransform> _outputPoses;
-        private static float _timestamp;
+        // The frame this cache was last filled on. Frame COUNT, not a timestamp: the check below
+        // is "have I already built the poses this frame", and Time.time is scaled - at
+        // timeScale 0 it stops advancing, so the guard read true forever and this kept handing
+        // back an Allocator.Temp array that Unity had already freed at the end of its frame,
+        // throwing ObjectDisposedException on every frame of a pause. frameCount also removes the
+        // float comparison, which degrades as Time.time grows.
+        private static int _lastBuiltFrame = -1;
 
         /// <summary>
         /// Computes world poses using SkeletonRetargeter for automatic parameter filling.
@@ -320,7 +326,7 @@ namespace Meta.XR.Movement.Retargeting
             out int skeletonChangeCount,
             out bool validPoses)
         {
-            if (Mathf.Approximately(Time.time - _timestamp, 0.0f))
+            if (_lastBuiltFrame == Time.frameCount)
             {
                 skeletonChangeCount = _data.SkeletonChangedCount;
                 validPoses = _data.IsDataValid;
@@ -328,7 +334,7 @@ namespace Meta.XR.Movement.Retargeting
             }
 
             var allPoses = GetPosesFromTheTracker(dataProvider, offset, convertToUnitySpace);
-            _timestamp = Time.time;
+            _lastBuiltFrame = Time.frameCount;
             _outputPoses = new NativeArray<NativeTransform>(allPoses.Length, Temp);
             _outputPoses.CopyFrom(allPoses);
             validPoses = _data.IsDataValid;
