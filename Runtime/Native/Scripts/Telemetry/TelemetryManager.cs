@@ -1,4 +1,5 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
+#define OVRPLUGIN_UNSUPPORTED_PLATFORM
 
 namespace Meta.XR.Movement.Editor
 {
@@ -82,7 +83,8 @@ namespace Meta.XR.Movement.Editor
             string eventJsonPayload = null,
             string errorMessage = null)
         {
-#if META_XR_CORE_V78_MIN
+
+#if META_XR_CORE_V78_MIN && !OVRPLUGIN_UNSUPPORTED_PLATFORM
             var telemetryResult = OVRPlugin.SendUnifiedEvent(
                 isEssential: isEssentialEvent ? OVRPlugin.Bool.True : OVRPlugin.Bool.False,
                 productType: _PRODUCT_TYPE,
