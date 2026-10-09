@@ -119,46 +119,55 @@ namespace Meta.XR.Movement.Retargeting
         /// <summary>
         /// The retargeted pose in world space.
         /// </summary>
+        [NonSerialized]
         public NativeArray<NativeTransform> RetargetedPose;
 
         /// <summary>
         /// The retargeted pose in local space.
         /// </summary>
+        [NonSerialized]
         public NativeArray<NativeTransform> RetargetedPoseLocal;
 
         /// <summary>
         /// The T-Pose in local space.
         /// </summary>
+        [NonSerialized]
         public NativeArray<NativeTransform> TargetReferencePoseLocal;
 
         /// <summary>
         /// The source pose that's being retargeted.
         /// </summary>
+        [NonSerialized]
         public NativeArray<NativeTransform> SourcePose;
 
         /// <summary>
         /// The source reference pose.
         /// </summary>
+        [NonSerialized]
         public NativeArray<NativeTransform> SourceReferencePose;
 
         /// <summary>
         /// The min T-Pose.
         /// </summary>
+        [NonSerialized]
         public NativeArray<NativeTransform> SourceMinTPose;
 
         /// <summary>
         /// The max T-Pose
         /// </summary>
+        [NonSerialized]
         public NativeArray<NativeTransform> SourceMaxTPose;
 
         /// <summary>
         /// The source parent joint indices.
         /// </summary>
+        [NonSerialized]
         public NativeArray<int> SourceParentIndices;
 
         /// <summary>
         /// The target parent joint indices.
         /// </summary>
+        [NonSerialized]
         public NativeArray<int> TargetParentIndices;
 
         /// <summary>
