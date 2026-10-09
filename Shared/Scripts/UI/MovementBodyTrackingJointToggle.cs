@@ -55,7 +55,7 @@ namespace Meta.XR.Movement.Samples
             var desiredSkeletonType = _ovrBody.ProvidedSkeletonType == BodyJointSet.FullBody
                 ? BodyJointSet.UpperBody
                 : BodyJointSet.FullBody;
-            var ovrBodies = FindObjectsByType<OVRBody>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var ovrBodies = FindObjectsByType<OVRBody>(FindObjectsInactive.Include);
             foreach (var ovrBody in ovrBodies)
             {
                 ovrBody.ProvidedSkeletonType = desiredSkeletonType;

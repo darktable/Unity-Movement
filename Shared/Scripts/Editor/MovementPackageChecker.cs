@@ -39,7 +39,7 @@ namespace Meta.XR.Movement.Samples
         private static bool ShouldRunPackageCheck()
         {
             // Check if specific scripts are present in the scene
-            return Object.FindFirstObjectByType<MovementSceneLoader>() != null;
+            return Object.FindAnyObjectByType<MovementSceneLoader>() != null;
         }
 
         private static void CheckForPackageInstallation()
