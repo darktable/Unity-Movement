@@ -941,7 +941,7 @@ namespace Meta.XR.Movement.Editor
         {
 #if ISDK_DEFINED
             // First search for HandVisual components
-            var handVisuals = Object.FindObjectsByType<Oculus.Interaction.HandVisual>(FindObjectsSortMode.None);
+            var handVisuals = Object.FindObjectsByType<Oculus.Interaction.HandVisual>();
             foreach (var handVisual in handVisuals)
             {
                 if (isLeftHand && IsLeftHand(handVisual.gameObject))
@@ -955,7 +955,7 @@ namespace Meta.XR.Movement.Editor
             }
 
             // If we didn't find the hand from HandVisual, search for SyntheticHand
-            var synthHands = Object.FindObjectsByType<Oculus.Interaction.Input.SyntheticHand>(FindObjectsSortMode.None);
+            var synthHands = Object.FindObjectsByType<Oculus.Interaction.Input.SyntheticHand>();
             foreach (var synthHand in synthHands)
             {
                 if (isLeftHand && IsLeftHand(synthHand.gameObject))

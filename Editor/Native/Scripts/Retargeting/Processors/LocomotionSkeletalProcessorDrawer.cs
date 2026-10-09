@@ -77,9 +77,9 @@ namespace Meta.XR.Movement.Retargeting.Editor
         {
 #if ISDK_DEFINED
 #if ISDK_74_OR_NEWER
-            var locomotor = Object.FindFirstObjectByType<FirstPersonLocomotor>();
+            var locomotor = Object.FindAnyObjectByType<FirstPersonLocomotor>();
 #else
-            var locomotor = Object.FindFirstObjectByType<PlayerLocomotor>();
+            var locomotor = Object.FindAnyObjectByType<PlayerLocomotor>();
 #endif
             if (locomotor != null && MSDKUtilityEditor.TryGetProcessorAtPropertyPathIndex<LocomotionSkeletalProcessor>(
                     property, false, out var locomotionProcessor))
@@ -87,7 +87,7 @@ namespace Meta.XR.Movement.Retargeting.Editor
                 var retargeter = Selection.activeGameObject.GetComponent<CharacterRetargeter>();
                 Undo.RecordObject(retargeter, "Update locomotion processor");
                 locomotionProcessor.LocomotionEventHandler = locomotor;
-                locomotionProcessor.CameraRig = Object.FindFirstObjectByType<OVRCameraRig>().transform;
+                locomotionProcessor.CameraRig = Object.FindAnyObjectByType<OVRCameraRig>().transform;
                 locomotionProcessor.Animator = retargeter.GetComponent<Animator>();
                 locomotionProcessor.AnimatorVerticalParam = "Vertical";
                 locomotionProcessor.AnimatorHorizontalParam = "Horizontal";

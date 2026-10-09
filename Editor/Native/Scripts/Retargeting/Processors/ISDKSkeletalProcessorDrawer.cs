@@ -86,7 +86,7 @@ namespace Meta.XR.Movement.Retargeting.Editor
             {
                 var retargeter = Selection.activeGameObject.GetComponent<CharacterRetargeter>();
                 Undo.RecordObject(retargeter, "Update ISDK processor");
-                isdkProcessor.CameraRig = Object.FindFirstObjectByType<OVRCameraRig>();
+                isdkProcessor.CameraRig = Object.FindAnyObjectByType<OVRCameraRig>();
                 isdkProcessor.LeftHand = leftHand;
                 isdkProcessor.RightHand = rightHand;
                 isdkProcessor.MaxDisplacementDistance = 0.05f;

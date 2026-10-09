@@ -113,7 +113,7 @@ namespace Oculus.Movement.Utils
 
         private static OVRWeightsProvider EnsureProperOVRWeightsProvider(bool runtimeInvocation)
         {
-            OVRWeightsProvider ovrWeightsProvider = GameObject.FindFirstObjectByType<OVRWeightsProvider>();
+            OVRWeightsProvider ovrWeightsProvider = GameObject.FindAnyObjectByType<OVRWeightsProvider>();
 
             if (ovrWeightsProvider == null)
             {
@@ -131,7 +131,7 @@ namespace Oculus.Movement.Utils
 
             if (ovrWeightsProvider.OVRFaceExpressionComp == null)
             {
-                OVRFaceExpressions ovrFaceExpressions = GameObject.FindFirstObjectByType<OVRFaceExpressions>();
+                OVRFaceExpressions ovrFaceExpressions = GameObject.FindAnyObjectByType<OVRFaceExpressions>();
                 if (ovrFaceExpressions == null)
                 {
                     ovrFaceExpressions = ovrWeightsProvider.gameObject.AddComponent<OVRFaceExpressions>();
