@@ -1519,15 +1519,24 @@ MonoBehaviour:
   - Joint: {fileID: 475184428048630668}
     ParentJoint: {fileID: 3329680361426202390}
   _shapePoseData: []
+  _maxFaceshapeValue: 100
   _debugDrawSourceSkeleton: 0
   _debugDrawSourceSkeletonColor: {r: 1, g: 1, b: 1, a: 1}
   _debugDrawTargetSkeleton: 0
   _debugDrawTargetSkeletonColor: {r: 0, g: 1, b: 0, a: 1}
+  _debugDrawInvalidTargetSkeletonColor: {r: 1, g: 0, b: 0, a: 1}
+  _debugDrawInvalidSourceSkeletonColor: {r: 1, g: 0, b: 1, a: 1}
+  _debugDrawSourceTPose: 0
+  _debugDrawSourceTPoseColor: {r: 0, g: 0.5, b: 1, a: 1}
+  _debugDrawTargetTPose: 0
+  _debugDrawTargetTPoseColor: {r: 1, g: 0.5, b: 0, a: 1}
   _skeletonRetargeter:
+    HipsScale: {x: 0, y: 0, z: 0}
     _retargetingBehavior: 0
     _hideLowerBodyWhenUpperBodyTracking: 1
     _hideLegScale: {x: 1, y: 0.5, z: 1}
-    _applyScale: 1
+    _applyRootScale: 1
+    _applyHeadScale: 1
     _currentScale: 1
     _headScaleFactor: 0.95
     _scaleRange: {x: 0.8, y: 1.2}
@@ -1547,6 +1556,28 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   _providedSkeletonType: 1
   _validBodyTrackingDelay: 0.25
+  _debugDrawSkeleton: 0
+  _debugSkeletonColor: {r: 1, g: 1, b: 1, a: 1}
+  _enableAIMotionSynthesizer: 0
+  _aiMotionSynthesizerConfig:
+    Config: {fileID: 0}
+    ModelAsset: {fileID: 0}
+    GuidanceAsset: {fileID: 0}
+    InputProvider: {fileID: 0}
+    RootMotionMode: 1
+    ReferenceTransform: {fileID: 0}
+    EnableSynthesizedStandingPose: 0
+    UpperBodySource: 0
+    LowerBodySource: 1
+    RootAlignmentDirection: 0
+    BlendMode: 1
+    BlendFactor: 0
+    ManualVelocity: {x: 0, y: 0, z: 0}
+    ManualDirection: {x: 0, y: 0, z: 1}
+    BlendInTime: 0.25
+    BlendOutTime: 1
+    DebugDrawAIMotionSynthesizer: 0
+    DebugAIMotionSynthesizerColor: {r: 0, g: 0, b: 1, a: 1}
 --- !u!4 &1125569144956322345 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 5225852861087425073, guid: 01841ff2664437e41a3418592a12de6d, type: 3}

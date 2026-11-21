@@ -2,21 +2,30 @@
 %TAG !u! tag:unity3d.com,2011:
 --- !u!21 &2100000
 Material:
-  serializedVersion: 6
+  serializedVersion: 8
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_Name: Floor
   m_Shader: {fileID: 4800000, guid: 2fbcc86ab1452f94a919d19a83abf926, type: 3}
-  m_ShaderKeywords: SPECULAR_AFFECT_BY_LIGHT _METALLICGLOSSMAP _NORMALMAP _SPECGLOSSMAP
-    _SPECULAR_AFFECT_BY_LIGHT _SPECULAR_AFFECT_BY_NDOTL
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords:
+  - _NORMALMAP
+  - _SPECGLOSSMAP
+  - _SPECULAR_AFFECT_BY_NDOTL
+  m_InvalidKeywords:
+  - SPECULAR_AFFECT_BY_LIGHT
+  - _METALLICGLOSSMAP
+  - _SPECULAR_AFFECT_BY_LIGHT
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 0
   m_DoubleSidedGI: 0
   m_CustomRenderQueue: -1
   stringTagMap: {}
   disabledShaderPasses: []
+  m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3
     m_TexEnvs:
@@ -60,6 +69,7 @@ Material:
         m_Texture: {fileID: 2800000, guid: 51b20b409acb5ae4a80122fbc020db78, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
+    m_Ints: []
     m_Floats:
     - _AreaLightSampleDistance: 0.5
     - _AreaLightSampleToggle: 0
@@ -94,3 +104,4 @@ Material:
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _SpecColor: {r: 0, g: 0, b: 0, a: 1}
   m_BuildTextureStacks: []
+  m_AllowLocking: 1
